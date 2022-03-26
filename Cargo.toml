@@ -1,6 +1,17 @@
 [package]
 name = "double_map"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
+
+authors = ["Tyler Bloom <tylerbloom2222@gmail.com>"]
+license = "LGPL-3.0"
+
+readme = "README.md"
+description = "Implementations of bi-directionally accessible hashmaps"
+repository = "https://github.com/TylerBloom/DoubleMap.git"
+
+keywords = ["hashmap","map"]
+categories = ["data-structures"]
+
 
 [dependencies]

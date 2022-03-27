@@ -1,19 +1,29 @@
 ## About
-DoubleMap is a is a collection that helps map data using two keys, a
-primary (required) key and a secondary (optional) key. This project is
-still very much in the works.
+NOTE: This project is still very much in the works.
 
-Goals of this data structure:
-<ul>
-<li>Allow for values to be mapped by two keys</li>
-<li>Secandary keys can be deleted without affecting the backing data</li>
-<li>Deleting a primary key removes the backing value and the associated secondary key (if one exists)</li>
-<li>Accessing and deleting data from the map (regardless of key type) should have the same complexity as the `std` map.</li>
-<ul>
-	<li>In particular, removing a primary key removes the associated secondary key (if one exists), so lookups between primary and secondary keys need to be bidirectional (well, technically only injective from secondary to primary).</li>
-</ul>
-<li>Minimize data duplication</li>
-<ul>
-	<li>Different amounts of duplication will be needed based on the constraints of the map</li>
-</ul>
-</ul>
+
+DoubleMap provides several map types that can be used to associate
+elements together while maintaining lookup speeds on par with the
+standard HashMap.
+
+There are many ways that you might want to map two sets of items,
+DoubleMap supports three.
+There are bijective maps (every item is always paired with exact one
+other), partial bijective maps (every item is paired with at most one
+other item), and injective maps (every item in set A is mapped to
+an item in set B but not uniquely).
+
+# How it Works
+There is one core algorithm that underlies all of these maps.
+Each map contains two HashSets, a left set and a right set.
+When a pair of items is inserted into the map, the left item is paired
+with the hash of the right item and stored in the left set.
+The same goes for the right item.
+When you want to get an item in the right set via the left set, the hash
+that's paired with the left item is used to lookup the right item.
+
+Of note, it is possible that two items with identical hashes are
+inserted into the map.
+This is generally not an issue.
+
+

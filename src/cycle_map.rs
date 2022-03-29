@@ -140,22 +140,43 @@ where
     ///
     /// Returns false if either item isn't found it its associated list.
     pub fn are_associated(&self, left: &L, right: &R) -> bool {
-        todo!()
+        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
+        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+        let opt_left = self.left_set.get(l_hash, equivalent_key(left));
+        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
+        match (opt_left, opt_right) {
+            (Some(left),Some(right)) => {
+                l_hash == right.hash && r_hash == left.hash
+            }
+            _ => false
+        }
     }
 
     /// Removes the given item from the left set and its associated item from the right set
-    pub fn remove_via_left(&mut self, left: &L) -> Option<(L, R)> {
-        todo!()
+    pub fn remove_via_left(&mut self, item: &L) -> Option<(L, R)> {
+        // Be careful here... removing an element too early can cause issues
+        let right_pairing: MappingPair<R> = unsafe { self.take_right(item)? };
+        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+        let left_pairing: MappingPair<L> = self.left_set.remove_entry(l_hash, equivalent_key(item))?;
+        Some((left_pairing.extract(), right_pairing.extract()))
     }
 
     /// Removes the given item from the right set and its associated item from the left set
-    pub fn remove_via_right(&mut self, left: &L) -> Option<(L, R)> {
-        todo!()
+    pub fn remove_via_right(&mut self, item: &R) -> Option<(L, R)> {
+        // Be careful here... removing an element too early can cause issues
+        let left_pairing: MappingPair<L> = unsafe { self.take_left(item)? };
+        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let right_pairing: MappingPair<R> = self.right_set.remove_entry(r_hash, equivalent_key(item))?;
+        Some((left_pairing.extract(), right_pairing.extract()))
     }
 
     /// Removes a pair of items only if they are mapped together and returns the pair
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
-        todo!()
+        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
+        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+        let left_pairing: MappingPair<L> = self.left_set.remove_entry(l_hash, equivalent_key(left))?;
+        let right_pairing: MappingPair<R> = self.right_set.remove_entry(r_hash, equivalent_key(right))?;
+        Some((left_pairing.extract(), right_pairing.extract()))
     }
 
     /// Swaps an item in the left set with another item, remaps the old item's associated right

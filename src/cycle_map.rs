@@ -21,15 +21,34 @@ fn equivalent_key<Q: PartialEq + ?Sized>(k: &Q) -> impl Fn(&MappingPair<Q>) -> b
     move |x| k.eq(&x.value)
 }
 
-pub(crate) fn make_hash<K, S>(hash_builder: &S, val: &K) -> u64
+fn does_map<'a, P, Q>(
+    value: &'a P,
+    map_ref: &'a RawTable<MappingPair<P>>,
+) -> impl Fn(&MappingPair<Q>) -> bool + 'a
 where
-    K: Hash + ?Sized,
+    P: Hash + PartialEq + Eq,
+    Q: Hash + PartialEq + Eq + ?Sized,
+{
+    move |pair| map_ref.get(pair.hash, equivalent_key(value)).is_some()
+}
+
+fn make_hash<T, S>(hash_builder: &S, val: &T) -> u64
+where
+    T: Hash + ?Sized,
     S: BuildHasher,
 {
     use core::hash::Hasher;
     let mut state = hash_builder.build_hasher();
     val.hash(&mut state);
     state.finish()
+}
+
+fn make_hasher<T, S>(hash_builder: &S) -> impl Fn(&T) -> u64 + '_
+where
+    T: Hash,
+    S: BuildHasher,
+{
+    move |val| make_hash::<T, S>(hash_builder, val)
 }
 
 // Contains a value and the hash of the item that the value maps to.
@@ -139,16 +158,14 @@ where
     /// Determines if two items are mapped to one another
     ///
     /// Returns false if either item isn't found it its associated list.
-    pub fn are_associated(&self, left: &L, right: &R) -> bool {
+    pub fn are_mapped(&self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
         let opt_left = self.left_set.get(l_hash, equivalent_key(left));
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
-            (Some(left),Some(right)) => {
-                l_hash == right.hash && r_hash == left.hash
-            }
-            _ => false
+            (Some(left), Some(right)) => l_hash == right.hash && r_hash == left.hash,
+            _ => false,
         }
     }
 
@@ -157,7 +174,8 @@ where
         // Be careful here... removing an element too early can cause issues
         let right_pairing: MappingPair<R> = unsafe { self.take_right(item)? };
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
-        let left_pairing: MappingPair<L> = self.left_set.remove_entry(l_hash, equivalent_key(item))?;
+        let left_pairing: MappingPair<L> =
+            self.left_set.remove_entry(l_hash, equivalent_key(item))?;
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
@@ -166,7 +184,8 @@ where
         // Be careful here... removing an element too early can cause issues
         let left_pairing: MappingPair<L> = unsafe { self.take_left(item)? };
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
-        let right_pairing: MappingPair<R> = self.right_set.remove_entry(r_hash, equivalent_key(item))?;
+        let right_pairing: MappingPair<R> =
+            self.right_set.remove_entry(r_hash, equivalent_key(item))?;
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
@@ -174,15 +193,38 @@ where
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let left_pairing: MappingPair<L> = self.left_set.remove_entry(l_hash, equivalent_key(left))?;
-        let right_pairing: MappingPair<R> = self.right_set.remove_entry(r_hash, equivalent_key(right))?;
+        let left_pairing: MappingPair<L> =
+            self.left_set.remove_entry(l_hash, equivalent_key(left))?;
+        let right_pairing: MappingPair<R> =
+            self.right_set.remove_entry(r_hash, equivalent_key(right))?;
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
     /// Swaps an item in the left set with another item, remaps the old item's associated right
     /// item, and returns the old left item
     pub fn swap_left(&mut self, new: L, old: &L) -> Option<L> {
-        todo!()
+        let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
+        let left_pairing: MappingPair<L> = self
+            .left_set
+            .remove_entry(old_l_hash, equivalent_key(old))?;
+        let r_pairing: &mut MappingPair<R> = self
+            .right_set
+            .get_mut(
+                left_pairing.hash,
+                does_map(&left_pairing.value, &self.left_set),
+            )
+            .unwrap();
+        let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
+        r_pairing.hash = new_l_hash;
+        self.left_set.insert(
+            new_l_hash,
+            MappingPair {
+                value: new,
+                hash: left_pairing.hash,
+            },
+            make_hasher::<MappingPair<L>, S>(&self.hash_builder),
+        );
+        Some(left_pairing.extract())
     }
 
     /// Does what [`swap_left`] does, but fails to swap if the old item isn't mapped to the given
@@ -196,14 +238,35 @@ where
     /// Does what [`swap_left`] does, but inserts a new pair if the old left item isn't in the map
     ///
     /// [`swap_left`]: struct.CycleMap.html#method.swap_left
-    pub fn swap_left_or_insert(&mut self, new: L, old: &L, expected: R) -> Option<L> {
+    pub fn swap_left_or_insert(&mut self, new: L, old: &L, to_insert: R) -> Option<L> {
         todo!()
     }
 
     /// Swaps an item in the right set with another item, remaps the old item's associated left
     /// item, and returns the old right item
-    pub fn swap_right(&mut self, new: R, old: &R) -> Option<L> {
-        todo!()
+    pub fn swap_right(&mut self, new: R, old: &R) -> Option<R> {
+        let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
+        let right_pairing: MappingPair<R> = self
+            .right_set
+            .remove_entry(old_r_hash, equivalent_key(old))?;
+        let l_pairing: &mut MappingPair<L> = self
+            .left_set
+            .get_mut(
+                right_pairing.hash,
+                does_map(&right_pairing.value, &self.right_set),
+            )
+            .unwrap();
+        let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
+        l_pairing.hash = new_r_hash;
+        self.right_set.insert(
+            new_r_hash,
+            MappingPair {
+                value: new,
+                hash: right_pairing.hash,
+            },
+            make_hasher::<MappingPair<R>, S>(&self.hash_builder),
+        );
+        Some(right_pairing.extract())
     }
 
     /// Does what [`swap_right`] does, but fails to swap if the old item isn't mapped to the given
@@ -217,45 +280,31 @@ where
     /// Does what [`swap_right`] does, but inserts a new pair if the old right item isn't in the map
     ///
     /// [`swap_right`]: struct.CycleMap.html#method.swap_right
-    pub fn swap_right_or_insert(&mut self, new: R, old: &R, expected: L) -> Option<R> {
+    pub fn swap_right_or_insert(&mut self, new: R, old: &R, to_insert: L) -> Option<R> {
         todo!()
     }
 
     /// Gets a reference to an item in the left set using an item in the right set.
     pub fn get_left(&self, item: &R) -> Option<&L> {
-        match self.get_right_inner(item) {
+        let right_pairing: &MappingPair<R> = self.get_right_inner(item)?;
+        match self.left_set.get(
+            right_pairing.hash,
+            does_map(&right_pairing.value, &self.right_set),
+        ) {
             None => None,
-            Some(right_pair) => unsafe {
-                let mut digest: Option<&L> = None;
-                for l_pair in self.left_set.iter_hash(right_pair.hash) {
-                    for r_pair in self.right_set.iter_hash(l_pair.as_ref().hash) {
-                        if r_pair.as_ref().value == right_pair.value {
-                            digest = Some(&l_pair.as_ref().value);
-                            break;
-                        }
-                    }
-                }
-                digest
-            },
+            Some(pairing) => Some(&pairing.value),
         }
     }
 
     /// Gets a reference to an item in the right set using an item in the left set.
     pub fn get_right(&self, item: &L) -> Option<&R> {
-        match self.get_left_inner(item) {
+        let left_pairing: &MappingPair<L> = self.get_left_inner(item)?;
+        match self.right_set.get(
+            left_pairing.hash,
+            does_map(&left_pairing.value, &self.left_set),
+        ) {
             None => None,
-            Some(left_pair) => unsafe {
-                let mut digest: Option<&R> = None;
-                for r_pair in self.right_set.iter_hash(left_pair.hash) {
-                    for l_pair in self.left_set.iter_hash(r_pair.as_ref().hash) {
-                        if l_pair.as_ref().value == left_pair.value {
-                            digest = Some(&r_pair.as_ref().value);
-                            break;
-                        }
-                    }
-                }
-                digest
-            },
+            Some(pairing) => Some(&pairing.value),
         }
     }
 
@@ -276,7 +325,12 @@ where
     /// This method is unsafe since removing the item break a cycle in the map.
     /// Ensure that any element you remove this way has its corresponding item removed too.
     pub(crate) unsafe fn take_left(&mut self, item: &R) -> Option<MappingPair<L>> {
-        todo!()
+        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let right_pairing: &MappingPair<R> = self.right_set.get(r_hash, equivalent_key(item))?;
+        self.left_set.remove_entry(
+            right_pairing.hash,
+            does_map(&right_pairing.value, &self.right_set),
+        )
     }
 
     /// Takes an item from the right set and returns it (if it exists).
@@ -284,7 +338,12 @@ where
     /// This method is unsafe since removing the item break a cycle in the map.
     /// Ensure that any element you remove this way has its corresponding item removed too.
     pub(crate) unsafe fn take_right(&mut self, item: &L) -> Option<MappingPair<R>> {
-        todo!()
+        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+        let left_pairing: &MappingPair<L> = self.left_set.get(l_hash, equivalent_key(item))?;
+        self.right_set.remove_entry(
+            left_pairing.hash,
+            does_map(&left_pairing.value, &self.left_set),
+        )
     }
 
     pub fn iter(&self) -> Iter<'_, L, R, S> {

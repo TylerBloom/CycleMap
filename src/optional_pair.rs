@@ -17,8 +17,19 @@
 /// ```
 pub enum OptionalPair<L, R> {
     None,
-    SinglePair((L, R)),
+    SomePair((L, R)),
     SomeLeft((L, R)),
     SomeRight((L, R)),
     SomeBoth(((L, R), (L, R))),
+}
+
+impl<L, R> From<(Option<(L, R)>, Option<(L, R)>)> for OptionalPair<L, R> {
+    fn from(input_pair: (Option<(L, R)>, Option<(L, R)>)) -> Self {
+        match input_pair {
+            (Some(pair_1), Some(pair_2)) => Self::SomeBoth((pair_1, pair_2)),
+            (Some(inner_pair), None) => Self::SomeLeft(inner_pair),
+            (None, Some(inner_pair)) => Self::SomeRight(inner_pair),
+            (None, None) => OptionalPair::None,
+        }
+    }
 }

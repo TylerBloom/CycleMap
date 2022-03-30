@@ -156,7 +156,36 @@ where
     /// identical hashes as the given left and right elements, and they are mapped to each other.
     /// In such a case, the old pair is returned and the new pair is inserted.
     pub fn insert(&mut self, left: L, right: R) -> OptionalPair<L, R> {
-        todo!()
+        let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
+        let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
+        let digest: OptionalPair<L, R>;
+        // Collision checker
+        if let Some((old_left, old_right)) = self.remove_via_hashes(l_hash, r_hash) {
+            digest = OptionalPair::SomePair((old_left, old_right));
+        } else {
+            let opt_from_left = self.remove_via_left(&left);
+            let opt_from_right = self.remove_via_right(&right);
+            digest = OptionalPair::from((opt_from_left, opt_from_right));
+        }
+        let left_pairing = MappingPair {
+            value: left,
+            hash: r_hash,
+        };
+        let right_pairing = MappingPair {
+            value: right,
+            hash: l_hash,
+        };
+        self.left_set.insert(
+            l_hash,
+            left_pairing,
+            make_hasher::<MappingPair<L>, S>(&self.hash_builder),
+        );
+        self.right_set.insert(
+            r_hash,
+            right_pairing,
+            make_hasher::<MappingPair<R>, S>(&self.hash_builder),
+        );
+        digest
     }
 
     /// Determines if two items are mapped to one another
@@ -203,11 +232,14 @@ where
             self.right_set.remove_entry(r_hash, equivalent_key(right))?;
         Some((left_pairing.extract(), right_pairing.extract()))
     }
-    
+
     /// This is ok to do since we already have to avoid doubled hash collisions
     fn remove_via_hashes(&mut self, l_hash: u64, r_hash: u64) -> Option<(L, R)> {
         let left_pairing = self.left_set.remove_entry(l_hash, paired_hashes(r_hash))?;
-        let right_pairing = self.right_set.remove_entry(r_hash, paired_hashes(l_hash)).unwrap();
+        let right_pairing = self
+            .right_set
+            .remove_entry(r_hash, paired_hashes(l_hash))
+            .unwrap();
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
@@ -532,7 +564,7 @@ where
         F: FnMut(&L, &R) -> bool,
     {
         let mut iter = self.iter();
-        let mut to_drop: Vec<(u64,u64)> = Vec::with_capacity(self.left_set.len());
+        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
         while let Some((left, right)) = iter.next() {
             if f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
@@ -591,8 +623,8 @@ impl<L, R, S> CycleMap<L, R, S> {
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
             hash_builder,
-            left_set: RawTable::new(),
-            right_set: RawTable::new(),
+            left_set: RawTable::with_capacity(capacity),
+            right_set: RawTable::with_capacity(capacity),
         }
     }
 

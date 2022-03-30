@@ -437,6 +437,7 @@ where
     }
 
     /// Does what [`swap_right`] does, but inserts a new pair if the old right item isn't in the map
+    /// None is returned on insert.
     ///
     /// [`swap_right`]: struct.CycleMap.html#method.swap_right
     pub fn swap_right_or_insert(&mut self, new: R, old: &R, to_insert: L) -> Option<R> {
@@ -566,7 +567,7 @@ where
         let mut iter = self.iter();
         let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
         while let Some((left, right)) = iter.next() {
-            if f(left, right) {
+            if !f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                 let r_hash = make_hash::<R, S>(&self.hash_builder, right);
                 to_drop.push((l_hash, r_hash));

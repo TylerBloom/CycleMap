@@ -21,6 +21,10 @@ fn equivalent_key<Q: PartialEq + ?Sized>(k: &Q) -> impl Fn(&MappingPair<Q>) -> b
     move |x| k.eq(&x.value)
 }
 
+fn paired_hashes<'a, Q: PartialEq + ?Sized>(k: u64) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
+    move |x| k.eq(&x.hash)
+}
+
 fn does_map<'a, P, Q>(
     value: &'a P,
     map_ref: &'a RawTable<MappingPair<P>>,
@@ -197,6 +201,13 @@ where
             self.left_set.remove_entry(l_hash, equivalent_key(left))?;
         let right_pairing: MappingPair<R> =
             self.right_set.remove_entry(r_hash, equivalent_key(right))?;
+        Some((left_pairing.extract(), right_pairing.extract()))
+    }
+    
+    /// This is ok to do since we already have to avoid doubled hash collisions
+    fn remove_via_hashes(&mut self, l_hash: u64, r_hash: u64) -> Option<(L, R)> {
+        let left_pairing = self.left_set.remove_entry(l_hash, paired_hashes(r_hash))?;
+        let right_pairing = self.right_set.remove_entry(r_hash, paired_hashes(l_hash)).unwrap();
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
@@ -516,6 +527,25 @@ where
         }
     }
 
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&L, &R) -> bool,
+    {
+        let mut iter = self.iter();
+        let mut to_drop: Vec<(u64,u64)> = Vec::with_capacity(self.left_set.len());
+        while let Some((left, right)) = iter.next() {
+            if f(left, right) {
+                let l_hash = make_hash::<L, S>(&self.hash_builder, left);
+                let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+                to_drop.push((l_hash, r_hash));
+            }
+        }
+        drop(iter);
+        for (l_hash, r_hash) in to_drop {
+            self.remove_via_hashes(l_hash, r_hash);
+        }
+    }
+
     /*
      * TODO: Revisit these...
     pub fn drain(&mut self) -> Drain<'_, L, R, S> {
@@ -587,13 +617,6 @@ impl<L, R, S> CycleMap<L, R, S> {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    pub fn retain<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&L, &R) -> bool,
-    {
-        todo!()
     }
 
     pub fn clear(&mut self) {

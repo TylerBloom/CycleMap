@@ -1,3 +1,3 @@
-#![allow(dead_code,unused_imports)]
-pub mod optional_pair;
+#![allow(dead_code, unused_imports)]
 pub mod cycle_map;
+pub mod optional_pair;

@@ -2,12 +2,12 @@
 NOTE: This project is still very much in the works.
 
 
-DoubleMap provides several map types that can be used to associate
+CycleMap provides several map types that can be used to associate
 items together while maintaining lookup speeds on par with the
 standard [HashMap](https://crates.io/crates/hashbrown).
 
 There are many ways that you might want to map two sets of items,
-DoubleMap supports four.
+CycleMap supports four.
  - There are bijective maps, every item is always paired with exact one
  	 other
  - Partial bijective maps, every item is paired with at most one other

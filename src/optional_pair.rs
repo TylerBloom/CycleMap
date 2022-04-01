@@ -40,10 +40,10 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::None => { write!(f, "None") },
-            Self::SomeLeft(pair) => { write!(f, "( ({:?}), None )", pair) },
-            Self::SomeRight(pair) => { write!(f, "( None, ({:?}) )", pair) },
-            Self::SomeBoth((l_pair, r_pair)) => { write!(f, "( ({:?}), ({:?}) )", l_pair, r_pair) },
-            Self::SomePair(pair) => { write!(f, "{:?}", pair) },
+            Self::SomeLeft(pair) => { write!(f, "SomeLeft( (({:?}), None) )", pair) },
+            Self::SomeRight(pair) => { write!(f, "SomeRight( (None, ({:?})) )", pair) },
+            Self::SomeBoth((l_pair, r_pair)) => { write!(f, "SomeBoth( (({:?}), ({:?})) )", l_pair, r_pair) },
+            Self::SomePair(pair) => { write!(f, "SomePair( {:?} )", pair) },
         }
     }
 }
@@ -62,3 +62,31 @@ where
         }
     }
 }
+
+#[derive(PartialEq, Eq)]
+pub enum OptionalItemOrPair<I, L, R>
+where
+    I: PartialEq + Eq,
+    L: PartialEq + Eq,
+    R: PartialEq + Eq,
+{
+    None,
+    SomeItem(I),
+    SomePair((L, R)),
+}
+
+impl<I, L, R> fmt::Debug for OptionalItemOrPair<I, L, R>
+where
+    I: fmt::Debug + Eq,
+    L: fmt::Debug + Eq,
+    R: fmt::Debug + Eq,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => { write!(f, "None") },
+            Self::SomeItem(item) => { write!(f, "SomeItem({:?})", item) },
+            Self::SomePair(pair) => { write!(f, "SomePair( {:?} )", pair) },
+        }
+    }
+}
+

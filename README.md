@@ -21,20 +21,20 @@ DoubleMap supports four.
 
 ## How it Works
 There is one core algorithm that underlies all of these maps. Each map
-contains two HashSets, a left set and a right set. When two items are
-paired, they form a cycle. Their hashes are associated with each and can
-be used to lookup each other. This means that a cycle can be found
-(uniquely) using either item or the pair of their hashes.
+contains two sets, a left set and a right set. When two items are
+paired, they form a cycle. The hash of each item is associated with its
+counterpart. This means that a cycle can be found (uniquely) using
+either item or the pair of their hashes at speeds comparable to a
+HashMap.
 
 This leads to the core invariant of the cycle algorithm: If two items
-form a cycle, then the pair of their hashes must be unique.
+form a cycle, then the pair of their hashes must be unique. This
+invariant is enforced during inserts and swaps (i.e. then items are
+added).
 
-This invariant is enforced during inserts and swaps (i.e. then items are
-added). Should an insert or swap break this invariant, the old pair is
-removed and returned and the new pair in put in its place. 
-
-Of note, it is possible that two items with identical hashes in a map so
-long as the items they are mapped to don't have the same hash. Also of
-note, if you assume that an item's hash is "random", then it is
-extremely unlikely for this kind of collision to occur.
+Of note, it is possible to have two items with identical hashes in a set
+so long as the items are mapped to items that don't have the same hash.
+Also of note, if you assume that an item's hash is "random" with respect
+to the other elements in the sets, then it is extremely unlikely for
+this kind of collision to occur.
 

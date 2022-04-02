@@ -367,8 +367,9 @@ where
         } else {
             None
         };
-        // Find the old right pairing
-        let r_pairing: &MappingPair<R> = self.right_set.get(old_r_hash, equivalent_key(old))?;
+        // Find the old right pairing... again
+        let r_pairing: &MappingPair<R> =
+            self.right_set.get(old_r_hash, equivalent_key(old)).unwrap();
         // Use old right pairing to find the left pairing
         let l_pairing: &mut MappingPair<L> = self
             .left_set
@@ -384,10 +385,11 @@ where
         };
         // Remove old right pairing
         drop(r_pairing);
-        let right_pairing: MappingPair<R> = self
+        let old_right_item: R = self
             .right_set
             .remove_entry(old_r_hash, equivalent_key(old))
-            .unwrap();
+            .unwrap()
+            .extract();
         // Insert new right pairing
         self.right_set.insert(
             new_r_hash,
@@ -395,26 +397,40 @@ where
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
         );
         // Return old right pairing
-        Some(right_pairing.extract())
+        SwapOptional::from((Some(old_right_item), eq_opt, col_opt))
     }
 
     /// Does what [`swap_right`] does, but fails to swap if the old item isn't mapped to the given
     /// left item.
     ///
     /// [`swap_right`]: struct.CycleMap.html#method.swap_right
-    pub fn swap_right_checked(&mut self, new: R, old: &R, expected: &L) -> Option<R> {
+    pub fn swap_right_checked(&mut self, new: R, old: &R, expected: &L) -> SwapOptional<R, L, R> {
+        // Check if old and expected are mapped
+        if self.are_mapped(expected, old) {
+            return SwapOptional::None;
+        } // Things can be removed after this point
+        // Check for Eq left item and remove that cycle if it exists
+        let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
+        let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
+        // Collision check
+        let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
+        let l_hash = make_hash::<L, S>(&self.hash_builder, expected);
+        let col_opt: Option<(L, R)> = if old_r_hash != new_r_hash {
+            self.remove_via_hashes(l_hash, new_r_hash)
+        } else {
+            None
+        };
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        let r_pairing: &MappingPair<R> = self.right_set.get(old_r_hash, equivalent_key(old))?;
+        let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
+            Some(p) => p,
+            None => { return SwapOptional::None; }
+        };
         // Use old right pairing to find the left pairing
         let l_pairing: &mut MappingPair<L> = self
             .left_set
             .get_mut(r_pairing.hash, does_map(&r_pairing.value, &self.right_set))
             .unwrap();
-        // Check that the right pairing value == expected
-        if l_pairing.value != *expected {
-            return None;
-        }
         // Updated left pairing
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
         l_pairing.hash = new_r_hash;
@@ -425,10 +441,11 @@ where
         };
         // Remove old right pairing
         drop(r_pairing);
-        let right_pairing: MappingPair<R> = self
+        let old_right_item: R = self
             .right_set
             .remove_entry(old_r_hash, equivalent_key(old))
-            .unwrap();
+            .unwrap()
+            .extract();
         // Insert new right pairing
         self.right_set.insert(
             new_r_hash,
@@ -436,14 +453,34 @@ where
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
         );
         // Return old right pairing
-        Some(right_pairing.extract())
+        SwapOptional::from((Some(old_right_item), eq_opt, col_opt))
     }
 
     /// Does what [`swap_right`] does, but inserts a new pair if the old right item isn't in the map
     /// None is returned on insert.
     ///
     /// [`swap_right`]: struct.CycleMap.html#method.swap_right
-    pub fn swap_right_or_insert(&mut self, new: R, old: &R, to_insert: L) -> Option<R> {
+    pub fn swap_right_or_insert(&mut self, new: R, old: &R, to_insert: L) -> SwapOptional<R, L, R> {
+        // Note: The Eq check will always pass if old isn't mapped. This is done before the if to
+        // make the borrow checker happy after we get a ref to r_pairing
+
+        // Check for Eq left item and remove that cycle if it exists
+        let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
+        let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
+        // Get the hash paired with the right item... there must be a way around this
+        let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
+        let l_hash: u64 = match self.right_set.get(old_r_hash, equivalent_key(old)) {
+            Some(p) => p.hash,
+            None => {
+                return SwapOptional::None;
+            }
+        };
+        // Collision check
+        let col_opt: Option<(L, R)> = if old_r_hash != new_r_hash {
+            self.remove_via_hashes(l_hash, new_r_hash)
+        } else {
+            None
+        };
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
         if let Some(r_pairing) = self.right_set.get(old_r_hash, equivalent_key(old)) {
@@ -462,10 +499,11 @@ where
             };
             // Remove old right pairing
             drop(r_pairing);
-            let right_pairing: MappingPair<R> = self
+            let old_right_item: R = self
                 .right_set
                 .remove_entry(old_r_hash, equivalent_key(old))
-                .unwrap();
+                .unwrap()
+                .extract();
             // Insert new right pairing
             self.right_set.insert(
                 new_r_hash,
@@ -473,10 +511,17 @@ where
                 make_hasher::<MappingPair<R>, S>(&self.hash_builder),
             );
             // Return old right pairing
-            Some(right_pairing.extract())
+            SwapOptional::from((Some(old_right_item), eq_opt, col_opt))
         } else {
-            self.insert(to_insert, new);
-            None
+            // TODO: Do further verification on this. All cases _should_ be covered here
+            match self.insert(to_insert, new) {
+                InsertOptional::None => SwapOptional::None,
+                InsertOptional::SomePair(pair) => SwapOptional::Collision(pair),
+                InsertOptional::SomeRight(pair) => SwapOptional::Eq(pair),
+                _ => {
+                    unreachable!("There isn't a left item")
+                }
+            }
         }
     }
 

@@ -43,16 +43,16 @@ where
                 write!(f, "None")
             }
             Self::SomeLeft(pair) => {
-                write!(f, "SomeLeft( {pair} )")
+                write!(f, "SomeLeft( {pair:?} )")
             }
             Self::SomeRight(pair) => {
-                write!(f, "SomeRight( {pair} )")
+                write!(f, "SomeRight( {pair:?} )")
             }
             Self::SomeBoth(l_pair, r_pair) => {
-                write!(f, "SomeBoth( {l_pair}, {r_pair} )")
+                write!(f, "SomeBoth( {l_pair:?}, {r_pair:?} )")
             }
             Self::SomePair(pair) => {
-                write!(f, "SomePair( {pair} )")
+                write!(f, "SomePair( {pair:?} )")
             }
         }
     }
@@ -65,7 +65,7 @@ where
 {
     fn from(input_pair: (Option<(L, R)>, Option<(L, R)>)) -> Self {
         match input_pair {
-            (Some(pair_1), Some(pair_2)) => Self::SomeBoth((pair_1, pair_2)),
+            (Some(pair_1), Some(pair_2)) => Self::SomeBoth(pair_1, pair_2),
             (Some(inner_pair), None) => Self::SomeLeft(inner_pair),
             (None, Some(inner_pair)) => Self::SomeRight(inner_pair),
             (None, None) => InsertOptional::None,
@@ -82,6 +82,8 @@ where
 {
     None,
     Item(I),
+    Collision((L, R)),
+    Eq((L, R)),
     ItemAndEq(I, (L, R)),
     ItemAndCollision(I, (L, R)),
     ItemEqAndCollision(I, (L, R), (L, R)),
@@ -99,16 +101,22 @@ where
                 write!(f, "None")
             },
             Self::Item(item) => {
-                write!(f, "Item({item})")
+                write!(f, "Item({item:?})")
+            },
+            Self::Collision(pair) => {
+                write!(f, "Collision({pair:?})")
+            },
+            Self::Eq(pair) => {
+                write!(f, "Eq({pair:?})")
             },
             Self::ItemAndEq(item, pair) => {
-                write!(f, "ItemAndEq( {item}, {pair})")
+                write!(f, "ItemAndEq( {item:?}, {pair:?})")
             },
             Self::ItemAndCollision(item, pair) => {
-                write!(f, "ItemAndCollision( {item}, {pair})")
+                write!(f, "ItemAndCollision( {item:?}, {pair:?})")
             },
             Self::ItemEqAndCollision(item, eq_pair, col_pair) => {
-                write!(f, "ItemEqAndCollision( {item}, {eq_pair}, {col_pair})")
+                write!(f, "ItemEqAndCollision( {item:?}, {eq_pair:?}, {col_pair:?})")
             },
         }
     }
@@ -122,8 +130,8 @@ where
 {
     fn from(input: (Option<I>, Option<(L, R)>, Option<(L, R)>)) -> Self {
         match input {
-            (None, _, _) => InsertOptional::None,
-            (Some(item), None, None) => InsertOptional::Item(item),
+            (None, _, _) => Self::None,
+            (Some(item), None, None) => Self::Item(item),
             (Some(item), Some(pair), None) => Self::ItemAndEq(item, pair),
             (Some(item), None, Some(pair)) => Self::ItemAndCollision(item, pair),
             (Some(item), Some(eq), Some(col)) => Self::ItemEqAndCollision(item, eq, col),

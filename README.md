@@ -1,3 +1,8 @@
+[![Crates.io](https://img.shields.io/crates/v/cycle_map.svg)](https://crates.io/crates/cycle_map)
+[![Documentation](https://docs.rs/cycle_map/badge.svg)](https://docs.rs/cycle_map/)
+[![Coverage Status](https://codecov.io/gh/TylerBloom/CycleMap/branch/main/graph/badge.svg)](https://codecov.io/gh/TylerBloom/CycleMap)
+![Maintenance](https://img.shields.io/badge/Maintenance%20Level-Actively%20Developed-brightgreen.svg)
+
 ## About
 NOTE: This project is still very much in the works.
 

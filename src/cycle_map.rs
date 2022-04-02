@@ -136,11 +136,7 @@ where
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let left_pairing: MappingPair<L> =
-            self.left_set.remove_entry(l_hash, equivalent_key(left))?;
-        let right_pairing: MappingPair<R> =
-            self.right_set.remove_entry(r_hash, equivalent_key(right))?;
-        Some((left_pairing.extract(), right_pairing.extract()))
+        self.remove_via_hashes(l_hash, r_hash)
     }
 
     /// This is ok to do since we already have to avoid doubled hash collisions
@@ -167,21 +163,11 @@ where
     /// to another right item, that cycle is removed.
     ///
     /// If there is a collision, the old cycle is returned.
-    pub fn swap_left(&mut self, new: L, old: &L) -> SwapOptional<L, L, R> {
+    pub fn swap_left(&mut self, old: &L, new: L) -> SwapOptional<L, L, R> {
         // Check for Eq left item and remove that cycle if it exists
         let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
-        let eq_opt: Option<(L, R)> = match self.left_set.get(new_l_hash, equivalent_key(&new)) {
-            // Remove the problem cycle
-            Some(_) => {
-                if new != *old {
-                    self.remove_via_left(old)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        };
-        // Get the hash of the right item... there must be a way around this
+        let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
+        // Get the hash paired with the right item... there must be a way around this
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
         let r_hash: u64 = match self.left_set.get(old_l_hash, equivalent_key(old)) {
             Some(p) => p.hash,
@@ -190,10 +176,11 @@ where
             }
         };
         // Collision check
-        let col_opt: Option<(L, R)> = None;
-        if old_l_hash != new_l_hash {
-            col_opt = self.remove_via_hashes(new_l_hash, r_hash);
-        }
+        let col_opt: Option<(L, R)> = if old_l_hash != new_l_hash {
+            self.remove_via_hashes(new_l_hash, r_hash)
+        } else {
+            None
+        };
         // Find the old left pairing... again
         let l_pairing: &MappingPair<L> =
             self.left_set.get(old_l_hash, equivalent_key(old)).unwrap();
@@ -226,41 +213,38 @@ where
         SwapOptional::from((Some(old_left_item), eq_opt, col_opt))
     }
 
-    /// Does what [`swap_left`] does, but fails to swap if the old item isn't mapped to the given
-    /// right item.
+    /// Does what [`swap_left`] does, but fails to swap and returns None if the old item isn't
+    /// mapped to the given right item.
     ///
     /// [`swap_left`]: struct.CycleMap.html#method.swap_left
-    pub fn swap_left_checked(
-        &mut self,
-        new: L,
-        old: &L,
-        expected: &R,
-    ) -> SwapOptional<L, &L, &R> {
-        // Find the old left pairing
+    pub fn swap_left_checked(&mut self, old: &L, expected: &R, new: L) -> SwapOptional<L, L, R> {
+        // Check if old and expected are mapped
+        if self.are_mapped(old, expected) {
+            return SwapOptional::None;
+        } // Things can be removed after this point
+          // Check for Eq left item and remove that cycle if it exists
+        let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
+        let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
+        // Collision check
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
+        let r_hash = make_hash::<R, S>(&self.hash_builder, expected);
+        let col_opt: Option<(L, R)> = if old_l_hash != new_l_hash {
+            self.remove_via_hashes(new_l_hash, r_hash)
+        } else {
+            None
+        };
+        // Find the old left pairing
         let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
             Some(p) => p,
             None => {
                 return SwapOptional::None;
             }
         };
-        // Collision check
-        let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
-        match self.get_via_hashes(new_l_hash, l_pairing.hash) {
-            Some(pair) => {
-                return SwapOptional::SomePair(pair);
-            }
-            None => {}
-        };
         // Use old left pairing to find right pairing
         let r_pairing: &mut MappingPair<R> = self
             .right_set
             .get_mut(l_pairing.hash, does_map(&l_pairing.value, &self.left_set))
             .unwrap();
-        // Check that the right pairing value == expected
-        if r_pairing.value != *expected {
-            return SwapOptional::None;
-        }
         // Updated right pairing
         r_pairing.hash = new_l_hash;
         // Create new left pairing
@@ -270,27 +254,46 @@ where
         };
         // Remove old left pairing
         drop(l_pairing);
-        let left_pairing: MappingPair<L> = self
+        let old_left_item: L = self
             .left_set
             .remove_entry(old_l_hash, equivalent_key(old))
-            .unwrap();
+            .unwrap()
+            .extract();
         // Insert new left pairing
         self.left_set.insert(
             new_l_hash,
             new_left_pairing,
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
         );
-        // Return old left pairing
-        SwapOptional::Item(left_pairing.extract())
+        // Return the optional
+        SwapOptional::from((Some(old_left_item), eq_opt, col_opt))
     }
 
     /// Does what [`swap_left`] does, but inserts a new pair if the old left item isn't in the map.
     /// None is returned on insert.
     ///
     /// [`swap_left`]: struct.CycleMap.html#method.swap_left
-    pub fn swap_left_or_insert(&mut self, new: L, old: &L, to_insert: R) -> Option<L> {
-        // Find the old left pairing
+    pub fn swap_left_or_insert(&mut self, old: &L, new: L, to_insert: R) -> SwapOptional<L, L, R> {
+        // Note: The Eq check will always pass if old isn't mapped. This is done before the if to
+        // make the borrow checker happy after we get a ref to l_pairing
+
+        // Check for Eq left item and remove that cycle if it exists
+        let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
+        let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
+        // Get the hash paired with the right item... there must be a way around this
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
+        let r_hash: u64 = match self.left_set.get(old_l_hash, equivalent_key(old)) {
+            Some(p) => p.hash,
+            None => {
+                return SwapOptional::None;
+            }
+        };
+        // Collision check
+        let col_opt: Option<(L, R)> = if old_l_hash != new_l_hash {
+            self.remove_via_hashes(new_l_hash, r_hash)
+        } else {
+            None
+        };
         if let Some(l_pairing) = self.left_set.get(old_l_hash, equivalent_key(old)) {
             // Use old left pairing to find right pairing
             let r_pairing: &mut MappingPair<R> = self
@@ -298,7 +301,6 @@ where
                 .get_mut(l_pairing.hash, does_map(&l_pairing.value, &self.left_set))
                 .unwrap();
             // Updated right pairing
-            let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
             r_pairing.hash = new_l_hash;
             // Create new left pairing
             let new_left_pairing: MappingPair<L> = MappingPair {
@@ -307,10 +309,11 @@ where
             };
             // Remove old left pairing
             drop(l_pairing);
-            let left_pairing: MappingPair<L> = self
+            let old_left_item: L = self
                 .left_set
                 .remove_entry(old_l_hash, equivalent_key(old))
-                .unwrap();
+                .unwrap()
+                .extract();
             // Insert new left pairing
             self.left_set.insert(
                 new_l_hash,
@@ -318,18 +321,53 @@ where
                 make_hasher::<MappingPair<L>, S>(&self.hash_builder),
             );
             // Return old left pairing
-            Some(left_pairing.extract())
+            SwapOptional::from((Some(old_left_item), eq_opt, col_opt))
         } else {
-            self.insert(new, to_insert);
+            // TODO: Do further verification on this. All cases _should_ be covered here
+            match self.insert(new, to_insert) {
+                InsertOptional::None => SwapOptional::None,
+                InsertOptional::SomePair(pair) => SwapOptional::Collision(pair),
+                InsertOptional::SomeRight(pair) => SwapOptional::Eq(pair),
+                _ => {
+                    unreachable!("There isn't a left item")
+                }
+            }
+        }
+    }
+
+    /// Pair of the collision checks done in the swap left methods
+    fn swap_left_eq_check(&mut self, old: &L, new: &L, new_hash: u64) -> Option<(L, R)> {
+        self.left_set.get(new_hash, equivalent_key(new))?;
+        if new != old {
+            // Remove the problem cycle
+            self.remove_via_left(old)
+        } else {
+            // If old and new are the same, they we are updating an cycle
             None
         }
     }
 
     /// Swaps an item in the right set with another item, remaps the old item's associated left
     /// item, and returns the old right item
-    pub fn swap_right(&mut self, new: R, old: &R) -> Option<R> {
-        // Find the old right pairing
+    pub fn swap_right(&mut self, new: R, old: &R) -> SwapOptional<R, L, R> {
+        // Check for Eq left item and remove that cycle if it exists
+        let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
+        let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
+        // Get the hash paired with the right item... there must be a way around this
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
+        let l_hash: u64 = match self.right_set.get(old_r_hash, equivalent_key(old)) {
+            Some(p) => p.hash,
+            None => {
+                return SwapOptional::None;
+            }
+        };
+        // Collision check
+        let col_opt: Option<(L, R)> = if old_r_hash != new_r_hash {
+            self.remove_via_hashes(l_hash, new_r_hash)
+        } else {
+            None
+        };
+        // Find the old right pairing
         let r_pairing: &MappingPair<R> = self.right_set.get(old_r_hash, equivalent_key(old))?;
         // Use old right pairing to find the left pairing
         let l_pairing: &mut MappingPair<L> = self
@@ -438,6 +476,18 @@ where
             Some(right_pairing.extract())
         } else {
             self.insert(to_insert, new);
+            None
+        }
+    }
+
+    /// Pair of the collision checks done in the swap left methods
+    fn swap_right_eq_check(&mut self, old: &R, new: &R, new_hash: u64) -> Option<(L, R)> {
+        self.right_set.get(new_hash, equivalent_key(new))?;
+        if new != old {
+            // Remove the problem cycle
+            self.remove_via_right(old)
+        } else {
+            // If old and new are the same, they we are updating an cycle
             None
         }
     }

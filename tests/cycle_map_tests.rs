@@ -2,7 +2,7 @@
 mod tests {
     use std::hash::{Hash, Hasher};
 
-    use double_map::{cycle_map::CycleMap, optional_pair::OptionalPair};
+    use double_map::{cycle_map::CycleMap, optional_pair::*};
 
     #[derive(PartialEq, Eq, Debug)]
     struct BumpingStruct {
@@ -21,7 +21,7 @@ mod tests {
         let mut map: CycleMap<u64, String> = CycleMap::with_capacity(100);
         for i in 0..100 {
             let opt = map.insert(i, i.to_string());
-            assert_eq!(opt, OptionalPair::None);
+            assert_eq!(opt, InsertOptional::None);
         }
         assert_eq!(map.len(), 100);
         for (val, s) in map.iter() {
@@ -41,7 +41,7 @@ mod tests {
                 value: "one".to_string(),
             },
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, InsertOptional::None);
         assert_eq!(map.len(), 1);
         let opt = map.insert(
             "two".to_string(),
@@ -50,7 +50,7 @@ mod tests {
                 value: "two".to_string(),
             },
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, InsertOptional::None);
         assert_eq!(map.len(), 2);
         let opt = map.insert(
             "two".to_string(),
@@ -61,7 +61,7 @@ mod tests {
         );
         assert_eq!(
             opt,
-            OptionalPair::SomePair((
+            InsertOptional::SomePair((
                 "two".to_string(),
                 BumpingStruct {
                     hashable: "two".to_string(),
@@ -86,7 +86,7 @@ mod tests {
         let mut map: CycleMap<u64, String> = CycleMap::with_capacity(100);
         for i in 0..100 {
             let opt = map.insert(i, i.to_string());
-            assert_eq!(opt, OptionalPair::None);
+            assert_eq!(opt, InsertOptional::None);
         }
         assert_eq!(map.len(), 100);
         map.retain(|x,_| x % 2 == 0);

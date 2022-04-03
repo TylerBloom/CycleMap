@@ -14,8 +14,8 @@ use std::fmt;
 /// match op {
 ///     InsertOptional::None => { /*...*/ },
 ///     InsertOptional::SomeLeft((left, right)) => { /*...*/ },
-///     InsertOptional::SomeRight((left, right)) => { /*...*/ },
-///     InsertOptional::SomeBoth((l_pair, r_pair)) => { /*...*/ },
+///     InsertOptional::SomeRight(pair) => { /*...*/ },
+///     InsertOptional::SomeBoth(l_pair, r_pair) => { /*...*/ },
 ///     InsertOptional::SomePair(pair) => { /*...*/ },
 /// }
 /// ```

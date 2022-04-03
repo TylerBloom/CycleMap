@@ -640,29 +640,6 @@ where
             self.remove_via_hashes(l_hash, r_hash);
         }
     }
-
-    /*
-    * TODO: Revisit these...
-    pub fn drain(&mut self) -> Drain<'_, L, R, S> {
-    Drain {
-    left_iter: self.left_set.drain(),
-    right_ref: &mut self,
-    }
-    }
-
-    pub fn drain_filter<F>(&mut self, f: F) -> DrainFilter<'_, L, R, S, F>
-    where
-    F: FnMut(&L, &R) -> bool,
-    {
-    DrainFilter {
-    f,
-    inner: DrainFilterInner {
-    left_iter: unsafe { self.left_set.iter() },
-    map_ref: &mut self,
-    },
-    }
-    }
-    */
 }
 
 impl<L, R, S> Default for CycleMap<L, R, S>
@@ -717,6 +694,32 @@ impl<L, R, S> CycleMap<L, R, S> {
     pub fn clear(&mut self) {
         self.left_set.clear();
         self.right_set.clear();
+    }
+}
+
+impl<L, R, S> Extend<(L, R)> for CycleMap<L, R, S>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+    S: BuildHasher,
+{
+    #[inline]
+    fn extend<T: IntoIterator<Item = (L, R)>>(&mut self, iter: T) {
+        for (l, r) in iter {
+            self.insert(l, r);
+        }
+    }
+}
+
+impl<L, R> FromIterator<(L, R)> for CycleMap<L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+    fn from_iter<T: IntoIterator<Item = (L, R)>>(iter: T) -> Self {
+        let mut digest = CycleMap::default();
+        digest.extend(iter);
+        digest
     }
 }
 
@@ -843,172 +846,111 @@ where
 
 impl<T> FusedIterator for SingleIter<'_, T> where T: Hash + Eq {}
 
-/*
- * TODO: Revisit these too...
-/// An iterator over the entry pairs of a `CycleMap`.
-pub struct Drain<'a, L, R, S>
-where
-L: Hash + Eq,
-R: Hash + Eq,
-S: BuildHasher,
-{
-left_iter: RawDrain<'a, MappingPair<L>>,
-map_ref: &'a mut CycleMap<L, R, S>,
-}
+#[cfg(test)]
+mod tests {
+    use hashbrown::hash_map::DefaultHashBuilder;
+    use std::hash::{BuildHasher, Hash};
 
-impl<L, R, S> Drain<'_, L, R, S>
-where
-L: Hash + Eq,
-R: Hash + Eq,
-S: BuildHasher,
-{
-/// Returns a iterator of references over the remaining items.
-pub(super) fn iter(&self) -> Iter<'_, L, R, S> {
-Iter {
-left_iter: self.left_iter.iter(),
-map_ref: self.map_ref,
-}
-}
-}
+    use crate::utils::make_hash;
 
-impl<'a, L, R, S> Iterator for Drain<'a, L, R, S>
-where
-L: Hash + Eq,
-R: Hash + Eq,
-S: BuildHasher,
-{
-type Item = (L, R);
+    use super::CycleMap;
 
-fn next(&mut self) -> Option<Self::Item> {
-match self.left_iter.next() {
-Some(l) => unsafe {
-let left = l.extract();
-let right = self.map_ref.take_right(&left).unwrap().extract();
-Some((left, right))
-},
-None => None,
-}
-}
-
-fn size_hint(&self) -> (usize, Option<usize>) {
-self.left_iter.size_hint()
-}
-}
-impl<L, R, S> ExactSizeIterator for Drain<'_, L, R, S>
-where
-L: Hash + Eq,
-R: Hash + Eq,
-S: BuildHasher,
-{
-fn len(&self) -> usize {
-self.left_iter.len()
-}
-}
-impl<L, R, S> FusedIterator for Drain<'_, L, R, S>
-where
-L: Hash + Eq,
-R: Hash + Eq,
-S: BuildHasher,
-{
-}
-
-impl<L, R, S> fmt::Debug for Drain<'_, L, R, S>
-where
-L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
-    S: BuildHasher,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.iter()).finish()
+    #[derive(PartialEq, Eq, Hash, Debug)]
+    struct TestingStruct {
+        pub(crate) value: u64,
+        pub(crate) data: String,
     }
-}
 
-pub struct DrainFilter<'a, L, R, S, F>
-where
-L: Hash + Eq,
-    R: Hash + Eq,
-    S: BuildHasher,
-    F: FnMut(&L, &R) -> bool,
-{
-    f: F,
-    inner: DrainFilterInner<'a, L, R, S>,
-}
+    fn construct_default_map() -> CycleMap<String, TestingStruct> {
+        (0..100)
+            .map(|i| (i.to_string(), TestingStruct::new(i, i.to_string())))
+            .collect()
+    }
 
-impl<'a, L, R, S, F> Drop for DrainFilter<'a, L, R, S, F>
-where
-L: Hash + Eq,
-    R: Hash + Eq,
-    S: BuildHasher,
-    F: FnMut(&L, &R) -> bool,
-{
-    fn drop(&mut self) {
-        while let Some(item) = self.next() {
-            let guard = ConsumeAllOnDrop(self);
-            drop(item);
-            mem::forget(guard);
+    #[test]
+    fn default_construction_test() {
+        let map = construct_default_map();
+        assert_eq!(map.len(), 100);
+    }
+
+    #[test]
+    fn get_inner_tests() {
+        let map = construct_default_map();
+        for i in 0..100 {
+            let i_str = i.to_string();
+            let i_struct = TestingStruct::new(i, i.to_string());
+            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
+            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
+            let left_opt = map.get_left_inner(&i_str);
+            assert!(left_opt.is_some());
+            let l_pairing = left_opt.unwrap();
+            assert_eq!(l_pairing.value, i_str);
+            assert_eq!(l_pairing.hash, r_hash);
+            let right_opt = map.get_right_inner(&i_struct);
+            assert!(right_opt.is_some());
+            let r_pairing = right_opt.unwrap();
+            assert_eq!(r_pairing.value, i_struct);
+            assert_eq!(r_pairing.hash, l_hash);
+        }
+    }
+
+    #[test]
+    fn hash_access_tests() {
+        let mut map = construct_default_map();
+        for i in 0..100 {
+            let i_str = i.to_string();
+            let left_get_opt = map.get_right(&i_str);
+            assert!(left_get_opt.is_some());
+            let i_struct = TestingStruct::new(i, i.to_string());
+            assert_eq!(*left_get_opt.unwrap(), i_struct);
+            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
+            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
+            let get_opt = map.get_via_hashes(l_hash, r_hash);
+            assert!(get_opt.is_some());
+            let (left, right) = get_opt.unwrap();
+            assert_eq!(*left, i_str);
+            assert_eq!(*right, i_struct);
+            let rem_opt = map.remove_via_hashes(l_hash, r_hash);
+            assert!(rem_opt.is_some());
+            let (left, right) = rem_opt.unwrap();
+            assert_eq!(left, i_str);
+            assert_eq!(right, i_struct);
+        }
+    }
+
+    #[test]
+    fn take_left_tests() {
+        let mut map = construct_default_map();
+        for i in 0..100 {
+            let i_str = i.to_string();
+            let i_struct = TestingStruct::new(i, i.to_string());
+            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
+            let take_opt = unsafe { map.take_left(&i_struct) };
+            assert!(take_opt.is_some());
+            let pairing = take_opt.unwrap();
+            assert_eq!(pairing.value, i_str);
+            assert_eq!(pairing.hash, r_hash);
+        }
+    }
+
+    #[test]
+    fn take_right_tests() {
+        let mut map = construct_default_map();
+        for i in 0..100 {
+            let i_str = i.to_string();
+            let i_struct = TestingStruct::new(i, i.to_string());
+            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
+            let take_opt = unsafe { map.take_right(&i_str) };
+            assert!(take_opt.is_some());
+            let pairing = take_opt.unwrap();
+            assert_eq!(pairing.value, i_struct);
+            assert_eq!(pairing.hash, l_hash);
+        }
+    }
+
+    impl TestingStruct {
+        pub(crate) fn new(value: u64, data: String) -> Self {
+            Self { value, data }
         }
     }
 }
-
-pub(super) struct ConsumeAllOnDrop<'a, T: Iterator>(pub &'a mut T);
-
-impl<T: Iterator> Drop for ConsumeAllOnDrop<'_, T> {
-    fn drop(&mut self) {
-        self.0.for_each(drop)
-    }
-}
-
-impl<L, R, S, F> Iterator for DrainFilter<'_, L, R, S, F>
-where
-L: Hash + Eq,
-    R: Hash + Eq,
-    S: BuildHasher,
-    F: FnMut(&L, &R) -> bool,
-{
-    type Item = (L, R);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next(&mut self.f)
-    }
-
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, self.inner.left_iter.size_hint().1)
-    }
-}
-
-impl<L, R, S, F> FusedIterator for DrainFilter<'_, L, R, S, F>
-where
-L: Hash + Eq,
-    R: Hash + Eq,
-    S: BuildHasher,
-    F: FnMut(&L, &R) -> bool,
-{
-}
-
-pub(super) struct DrainFilterInner<'a, L, R, S> {
-    pub left_iter: RawIter<MappingPair<L>>,
-    pub map_ref: &'a mut CycleMap<L, R, S>,
-}
-
-impl<L, R, S> DrainFilterInner<'_, L, R, S>
-where
-L: Hash + Eq,
-    R: Hash + Eq,
-    S: BuildHasher,
-{
-    pub(super) fn next<F>(&mut self, f: &mut F) -> Option<(L, R)>
-        where
-        F: FnMut(&L, &R) -> bool,
-        {
-            while let Some(item) = self.left_iter.next() {
-                let left = unsafe { &item.as_ref().value };
-                let right = self.map_ref.get_right(&left).unwrap();
-                if f(left, right) {
-                    return self.map_ref.remove(left, right);
-                }
-            }
-            None
-        }
-}
-*/

@@ -14,7 +14,7 @@ pub(crate) fn equivalent_key<Q: PartialEq + ?Sized>(
 pub(crate) fn paired_hashes<'a, Q: PartialEq + ?Sized>(
     k: u64,
 ) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
-    move |x| k.eq(&x.hash)
+    move |x| k == x.hash
 }
 
 pub(crate) fn does_map<'a, P, Q>(

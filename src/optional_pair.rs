@@ -6,7 +6,7 @@ use std::fmt;
 ///
 /// # Examples
 /// ```rust
-/// use double_map::optional_pair::InsertOptional;
+/// use cycle_map::optional_pair::InsertOptional;
 ///
 /// let op: InsertOptional<String, String> = InsertOptional::SomeLeft(("Hello".to_string(),
 /// "World".to_string()));

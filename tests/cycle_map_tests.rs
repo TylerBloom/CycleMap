@@ -2,7 +2,7 @@
 mod tests {
     use std::hash::{Hash, Hasher};
 
-    use double_map::{cycle_map::CycleMap, optional_pair::*};
+    use cycle_map::{cycle_map::CycleMap, optional_pair::*};
 
     #[derive(PartialEq, Eq, Debug)]
     struct BumpingStruct {

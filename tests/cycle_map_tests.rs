@@ -89,7 +89,7 @@ mod tests {
             assert_eq!(opt, InsertOptional::None);
         }
         assert_eq!(map.len(), 100);
-        map.retain(|x,_| x % 2 == 0);
+        map.retain(|x, _| x % 2 == 0);
         assert_eq!(map.len(), 50);
         for (val, s) in map.iter() {
             assert_eq!(val % 2, 0);

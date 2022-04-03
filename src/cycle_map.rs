@@ -409,7 +409,7 @@ where
         if self.are_mapped(expected, old) {
             return SwapOptional::None;
         } // Things can be removed after this point
-        // Check for Eq left item and remove that cycle if it exists
+          // Check for Eq left item and remove that cycle if it exists
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
         // Collision check
@@ -424,7 +424,9 @@ where
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
         let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
             Some(p) => p,
-            None => { return SwapOptional::None; }
+            None => {
+                return SwapOptional::None;
+            }
         };
         // Use old right pairing to find the left pairing
         let l_pairing: &mut MappingPair<L> = self

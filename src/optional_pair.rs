@@ -99,25 +99,28 @@ where
         match self {
             Self::None => {
                 write!(f, "None")
-            },
+            }
             Self::Item(item) => {
                 write!(f, "Item({item:?})")
-            },
+            }
             Self::Collision(pair) => {
                 write!(f, "Collision({pair:?})")
-            },
+            }
             Self::Eq(pair) => {
                 write!(f, "Eq({pair:?})")
-            },
+            }
             Self::ItemAndEq(item, pair) => {
                 write!(f, "ItemAndEq( {item:?}, {pair:?})")
-            },
+            }
             Self::ItemAndCollision(item, pair) => {
                 write!(f, "ItemAndCollision( {item:?}, {pair:?})")
-            },
+            }
             Self::ItemEqAndCollision(item, eq_pair, col_pair) => {
-                write!(f, "ItemEqAndCollision( {item:?}, {eq_pair:?}, {col_pair:?})")
-            },
+                write!(
+                    f,
+                    "ItemEqAndCollision( {item:?}, {eq_pair:?}, {col_pair:?})"
+                )
+            }
         }
     }
 }

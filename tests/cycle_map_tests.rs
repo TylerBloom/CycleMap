@@ -32,47 +32,6 @@ mod tests {
     }
 
     #[test]
-    fn collision_test() {
-        let mut map: CycleMap<String, BumpingStruct> = CycleMap::with_capacity(3);
-        let opt = map.insert(
-            "one".to_string(),
-            BumpingStruct {
-                hashable: "one".to_string(),
-                value: "one".to_string(),
-            },
-        );
-        assert_eq!(opt, InsertOptional::None);
-        assert_eq!(map.len(), 1);
-        let opt = map.insert(
-            "two".to_string(),
-            BumpingStruct {
-                hashable: "two".to_string(),
-                value: "two".to_string(),
-            },
-        );
-        assert_eq!(opt, InsertOptional::None);
-        assert_eq!(map.len(), 2);
-        let opt = map.insert(
-            "two".to_string(),
-            BumpingStruct {
-                hashable: "two".to_string(),
-                value: "three".to_string(),
-            },
-        );
-        assert_eq!(
-            opt,
-            InsertOptional::SomePair((
-                "two".to_string(),
-                BumpingStruct {
-                    hashable: "two".to_string(),
-                    value: "two".to_string(),
-                }
-            ))
-        );
-        assert_eq!(map.len(), 2);
-    }
-
-    #[test]
     fn get_tests() {}
 
     #[test]

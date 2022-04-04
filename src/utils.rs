@@ -11,10 +11,11 @@ pub(crate) fn equivalent_key<Q: PartialEq + ?Sized>(
     move |x| k.eq(&x.value)
 }
 
-pub(crate) fn paired_hashes<'a, Q: PartialEq + ?Sized>(
-    k: u64,
+pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
+    hash: u64,
+    id: u64,
 ) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
-    move |x| k == x.hash
+    move |x| id == x.id && hash == x.hash
 }
 
 pub(crate) fn does_map<'a, P, Q>(
@@ -51,6 +52,7 @@ where
 pub(crate) struct MappingPair<T> {
     pub(crate) value: T,
     pub(crate) hash: u64,
+    pub(crate) id: u64,
 }
 
 impl<T> MappingPair<T> {
@@ -68,7 +70,7 @@ impl<T: Hash> Hash for MappingPair<T> {
 
 impl<T: PartialEq> PartialEq for MappingPair<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.value.eq(&other.value)
+        self.id.eq(&other.id) && self.value.eq(&other.value)
     }
 }
 
@@ -85,6 +87,7 @@ impl<T: Clone> Clone for MappingPair<T> {
         Self {
             value: self.value.clone(),
             hash: self.hash.clone(),
+            id: self.id.clone(),
         }
     }
 }
@@ -93,8 +96,8 @@ impl<T: fmt::Debug> fmt::Debug for MappingPair<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "MappingPair {{ value: {:?}, hash: {} }}",
-            self.value, self.hash
+            "MappingPair {{ value: {:?}, hash: {}, id: {} }}",
+            self.value, self.hash, self.id
         )
     }
 }

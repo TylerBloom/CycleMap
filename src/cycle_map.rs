@@ -35,6 +35,7 @@ use crate::utils::*;
 /// elements. You can read more about what causes collisions [here]("").
 pub struct CycleMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
+    pub(crate) counter: u64,
     left_set: RawTable<MappingPair<L>>,
     right_set: RawTable<MappingPair<R>>,
 }
@@ -66,25 +67,22 @@ where
     /// identical hashes as the given left and right elements, and they are mapped to each other.
     /// In such a case, the old pair is returned and the new pair is inserted.
     pub fn insert(&mut self, left: L, right: R) -> InsertOptional<L, R> {
+        let opt_from_left = self.remove_via_left(&left);
+        let opt_from_right = self.remove_via_right(&right);
+        let digest = InsertOptional::from((opt_from_left, opt_from_right));
         let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
-        let digest: InsertOptional<L, R>;
-        // Collision checker
-        if let Some((old_left, old_right)) = self.remove_via_hashes(l_hash, r_hash) {
-            digest = InsertOptional::SomePair((old_left, old_right));
-        } else {
-            let opt_from_left = self.remove_via_left(&left);
-            let opt_from_right = self.remove_via_right(&right);
-            digest = InsertOptional::from((opt_from_left, opt_from_right));
-        }
         let left_pairing = MappingPair {
             value: left,
             hash: r_hash,
+            id: self.counter,
         };
         let right_pairing = MappingPair {
             value: right,
             hash: l_hash,
+            id: self.counter,
         };
+        self.counter += 1;
         self.left_set.insert(
             l_hash,
             left_pairing,
@@ -107,53 +105,56 @@ where
         let opt_left = self.left_set.get(l_hash, equivalent_key(left));
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
-            (Some(left), Some(right)) => l_hash == right.hash && r_hash == left.hash,
+            (Some(left), Some(right)) => {
+                left.id == right.id && l_hash == right.hash && r_hash == left.hash
+            }
             _ => false,
         }
     }
 
     /// Removes the given item from the left set and its associated item from the right set
     pub fn remove_via_left(&mut self, item: &L) -> Option<(L, R)> {
-        // Be careful here... removing an element too early can cause issues
-        let right_pairing: MappingPair<R> = unsafe { self.take_right(item)? };
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_pairing: MappingPair<L> =
             self.left_set.remove_entry(l_hash, equivalent_key(item))?;
+        let right_pairing = self
+            .right_set
+            .remove_entry(left_pairing.hash, hash_and_id(l_hash, left_pairing.id))
+            .unwrap();
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
     /// Removes the given item from the right set and its associated item from the left set
     pub fn remove_via_right(&mut self, item: &R) -> Option<(L, R)> {
-        // Be careful here... removing an element too early can cause issues
-        let left_pairing: MappingPair<L> = unsafe { self.take_left(item)? };
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_pairing: MappingPair<R> =
             self.right_set.remove_entry(r_hash, equivalent_key(item))?;
+        let left_pairing = self
+            .left_set
+            .remove_entry(right_pairing.hash, hash_and_id(r_hash, right_pairing.id))
+            .unwrap();
+        Some((left_pairing.extract(), right_pairing.extract()))
+    }
+
+    /// Removes a pair using the hash of the left item, right item, and their shared pairing id
+    fn remove_via_hashes_and_id(&mut self, l_hash: u64, r_hash: u64, id: u64) -> Option<(L, R)> {
+        let left_pairing = self
+            .left_set
+            .remove_entry(l_hash, hash_and_id(r_hash, id))?;
+        let right_pairing = self
+            .right_set
+            .remove_entry(r_hash, hash_and_id(l_hash, id))
+            .unwrap();
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
     /// Removes a pair of items only if they are mapped together and returns the pair
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        self.remove_via_hashes(l_hash, r_hash)
-    }
-
-    /// This is ok to do since we already have to avoid doubled hash collisions
-    fn remove_via_hashes(&mut self, l_hash: u64, r_hash: u64) -> Option<(L, R)> {
-        let left_pairing = self.left_set.remove_entry(l_hash, paired_hashes(r_hash))?;
-        let right_pairing = self
-            .right_set
-            .remove_entry(r_hash, paired_hashes(l_hash))
-            .unwrap();
-        Some((left_pairing.extract(), right_pairing.extract()))
-    }
-
-    /// This is ok to do since we already have to avoid doubled hash collisions
-    fn get_via_hashes(&self, l_hash: u64, r_hash: u64) -> Option<(&L, &R)> {
-        let left_pairing = self.left_set.get(l_hash, paired_hashes(r_hash))?;
-        let right_pairing = self.right_set.get(r_hash, paired_hashes(l_hash)).unwrap();
-        Some((&left_pairing.value, &right_pairing.value))
+        if self.are_mapped(left, right) {
+            self.remove_via_left(left)
+        } else {
+            None
+        }
     }
 
     /// Swaps an item in the left set with another item, remaps the old item's associated right
@@ -167,27 +168,18 @@ where
         // Check for Eq left item and remove that cycle if it exists
         let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
-        // Get the hash paired with the right item... there must be a way around this
+        // Find the old left pairing
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        let r_hash: u64 = match self.left_set.get(old_l_hash, equivalent_key(old)) {
-            Some(p) => p.hash,
+        let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
+            Some(p) => p,
             None => {
                 return SwapOptional::None;
             }
         };
-        // Collision check
-        let col_opt: Option<(L, R)> = if old_l_hash != new_l_hash {
-            self.remove_via_hashes(new_l_hash, r_hash)
-        } else {
-            None
-        };
-        // Find the old left pairing... again
-        let l_pairing: &MappingPair<L> =
-            self.left_set.get(old_l_hash, equivalent_key(old)).unwrap();
         // Use old left pairing to find right pairing
         let r_pairing: &mut MappingPair<R> = self
             .right_set
-            .get_mut(l_pairing.hash, does_map(&l_pairing.value, &self.left_set))
+            .get_mut(l_pairing.hash, hash_and_id(old_l_hash, l_pairing.id))
             .unwrap();
         // Updated right pairing
         r_pairing.hash = new_l_hash;
@@ -195,6 +187,7 @@ where
         let new_left_pairing: MappingPair<L> = MappingPair {
             value: new,
             hash: l_pairing.hash,
+            id: l_pairing.id,
         };
         // Remove old left pairing
         drop(l_pairing);
@@ -210,7 +203,7 @@ where
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
         );
         // Return old left pairing
-        SwapOptional::from((Some(old_left_item), eq_opt, col_opt))
+        SwapOptional::from((Some(old_left_item), eq_opt))
     }
 
     /// Does what [`swap_left`] does, but fails to swap and returns None if the old item isn't
@@ -225,14 +218,7 @@ where
           // Check for Eq left item and remove that cycle if it exists
         let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
-        // Collision check
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, expected);
-        let col_opt: Option<(L, R)> = if old_l_hash != new_l_hash {
-            self.remove_via_hashes(new_l_hash, r_hash)
-        } else {
-            None
-        };
         // Find the old left pairing
         let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
             Some(p) => p,
@@ -243,7 +229,7 @@ where
         // Use old left pairing to find right pairing
         let r_pairing: &mut MappingPair<R> = self
             .right_set
-            .get_mut(l_pairing.hash, does_map(&l_pairing.value, &self.left_set))
+            .get_mut(l_pairing.hash, hash_and_id(old_l_hash, l_pairing.id))
             .unwrap();
         // Updated right pairing
         r_pairing.hash = new_l_hash;
@@ -251,6 +237,7 @@ where
         let new_left_pairing: MappingPair<L> = MappingPair {
             value: new,
             hash: l_pairing.hash,
+            id: l_pairing.id,
         };
         // Remove old left pairing
         drop(l_pairing);
@@ -266,7 +253,7 @@ where
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
         );
         // Return the optional
-        SwapOptional::from((Some(old_left_item), eq_opt, col_opt))
+        SwapOptional::from((Some(old_left_item), eq_opt))
     }
 
     /// Does what [`swap_left`] does, but inserts a new pair if the old left item isn't in the map.
@@ -282,23 +269,11 @@ where
         let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
         // Get the hash paired with the right item... there must be a way around this
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        let r_hash: u64 = match self.left_set.get(old_l_hash, equivalent_key(old)) {
-            Some(p) => p.hash,
-            None => {
-                return SwapOptional::None;
-            }
-        };
-        // Collision check
-        let col_opt: Option<(L, R)> = if old_l_hash != new_l_hash {
-            self.remove_via_hashes(new_l_hash, r_hash)
-        } else {
-            None
-        };
         if let Some(l_pairing) = self.left_set.get(old_l_hash, equivalent_key(old)) {
             // Use old left pairing to find right pairing
             let r_pairing: &mut MappingPair<R> = self
                 .right_set
-                .get_mut(l_pairing.hash, does_map(&l_pairing.value, &self.left_set))
+                .get_mut(l_pairing.hash, hash_and_id(old_l_hash, l_pairing.id))
                 .unwrap();
             // Updated right pairing
             r_pairing.hash = new_l_hash;
@@ -306,6 +281,7 @@ where
             let new_left_pairing: MappingPair<L> = MappingPair {
                 value: new,
                 hash: l_pairing.hash,
+                id: l_pairing.id,
             };
             // Remove old left pairing
             drop(l_pairing);
@@ -321,12 +297,11 @@ where
                 make_hasher::<MappingPair<L>, S>(&self.hash_builder),
             );
             // Return old left pairing
-            SwapOptional::from((Some(old_left_item), eq_opt, col_opt))
+            SwapOptional::from((Some(old_left_item), eq_opt))
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(new, to_insert) {
                 InsertOptional::None => SwapOptional::None,
-                InsertOptional::SomePair(pair) => SwapOptional::Collision(pair),
                 InsertOptional::SomeRight(pair) => SwapOptional::Eq(pair),
                 _ => {
                     unreachable!("There isn't a left item")
@@ -353,27 +328,18 @@ where
         // Check for Eq left item and remove that cycle if it exists
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
-        // Get the hash paired with the right item... there must be a way around this
+        // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        let l_hash: u64 = match self.right_set.get(old_r_hash, equivalent_key(old)) {
-            Some(p) => p.hash,
+        let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
+            Some(p) => p,
             None => {
                 return SwapOptional::None;
             }
         };
-        // Collision check
-        let col_opt: Option<(L, R)> = if old_r_hash != new_r_hash {
-            self.remove_via_hashes(l_hash, new_r_hash)
-        } else {
-            None
-        };
-        // Find the old right pairing... again
-        let r_pairing: &MappingPair<R> =
-            self.right_set.get(old_r_hash, equivalent_key(old)).unwrap();
         // Use old right pairing to find the left pairing
         let l_pairing: &mut MappingPair<L> = self
             .left_set
-            .get_mut(r_pairing.hash, does_map(&r_pairing.value, &self.right_set))
+            .get_mut(r_pairing.hash, hash_and_id(old_r_hash, r_pairing.id))
             .unwrap();
         // Updated left pairing
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
@@ -382,6 +348,7 @@ where
         let new_right_pairing = MappingPair {
             value: new,
             hash: r_pairing.hash,
+            id: r_pairing.id,
         };
         // Remove old right pairing
         drop(r_pairing);
@@ -397,7 +364,7 @@ where
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
         );
         // Return old right pairing
-        SwapOptional::from((Some(old_right_item), eq_opt, col_opt))
+        SwapOptional::from((Some(old_right_item), eq_opt))
     }
 
     /// Does what [`swap_right`] does, but fails to swap if the old item isn't mapped to the given
@@ -412,14 +379,6 @@ where
           // Check for Eq left item and remove that cycle if it exists
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
-        // Collision check
-        let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        let l_hash = make_hash::<L, S>(&self.hash_builder, expected);
-        let col_opt: Option<(L, R)> = if old_r_hash != new_r_hash {
-            self.remove_via_hashes(l_hash, new_r_hash)
-        } else {
-            None
-        };
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
         let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
@@ -431,7 +390,7 @@ where
         // Use old right pairing to find the left pairing
         let l_pairing: &mut MappingPair<L> = self
             .left_set
-            .get_mut(r_pairing.hash, does_map(&r_pairing.value, &self.right_set))
+            .get_mut(r_pairing.hash, hash_and_id(old_r_hash, r_pairing.id))
             .unwrap();
         // Updated left pairing
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
@@ -440,6 +399,7 @@ where
         let new_right_pairing = MappingPair {
             value: new,
             hash: r_pairing.hash,
+            id: r_pairing.id,
         };
         // Remove old right pairing
         drop(r_pairing);
@@ -455,7 +415,7 @@ where
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
         );
         // Return old right pairing
-        SwapOptional::from((Some(old_right_item), eq_opt, col_opt))
+        SwapOptional::from((Some(old_right_item), eq_opt))
     }
 
     /// Does what [`swap_right`] does, but inserts a new pair if the old right item isn't in the map
@@ -469,27 +429,13 @@ where
         // Check for Eq left item and remove that cycle if it exists
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
-        // Get the hash paired with the right item... there must be a way around this
-        let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        let l_hash: u64 = match self.right_set.get(old_r_hash, equivalent_key(old)) {
-            Some(p) => p.hash,
-            None => {
-                return SwapOptional::None;
-            }
-        };
-        // Collision check
-        let col_opt: Option<(L, R)> = if old_r_hash != new_r_hash {
-            self.remove_via_hashes(l_hash, new_r_hash)
-        } else {
-            None
-        };
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
         if let Some(r_pairing) = self.right_set.get(old_r_hash, equivalent_key(old)) {
             // Use old right pairing to find the left pairing
             let l_pairing: &mut MappingPair<L> = self
                 .left_set
-                .get_mut(r_pairing.hash, does_map(&r_pairing.value, &self.right_set))
+                .get_mut(r_pairing.hash, hash_and_id(old_r_hash, r_pairing.id))
                 .unwrap();
             // Updated left pairing
             let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
@@ -498,6 +444,7 @@ where
             let new_right_pairing = MappingPair {
                 value: new,
                 hash: r_pairing.hash,
+                id: r_pairing.id,
             };
             // Remove old right pairing
             drop(r_pairing);
@@ -513,12 +460,11 @@ where
                 make_hasher::<MappingPair<R>, S>(&self.hash_builder),
             );
             // Return old right pairing
-            SwapOptional::from((Some(old_right_item), eq_opt, col_opt))
+            SwapOptional::from((Some(old_right_item), eq_opt))
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(to_insert, new) {
                 InsertOptional::None => SwapOptional::None,
-                InsertOptional::SomePair(pair) => SwapOptional::Collision(pair),
                 InsertOptional::SomeRight(pair) => SwapOptional::Eq(pair),
                 _ => {
                     unreachable!("There isn't a left item")
@@ -541,11 +487,12 @@ where
 
     /// Gets a reference to an item in the left set using an item in the right set.
     pub fn get_left(&self, item: &R) -> Option<&L> {
-        let right_pairing: &MappingPair<R> = self.get_right_inner(item)?;
-        match self.left_set.get(
-            right_pairing.hash,
-            does_map(&right_pairing.value, &self.right_set),
-        ) {
+        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let right_pairing: &MappingPair<R> = self.get_right_inner_with_hash(item, r_hash)?;
+        match self
+            .left_set
+            .get(right_pairing.hash, hash_and_id(r_hash, right_pairing.id))
+        {
             None => None,
             Some(pairing) => Some(&pairing.value),
         }
@@ -553,14 +500,22 @@ where
 
     /// Gets a reference to an item in the right set using an item in the left set.
     pub fn get_right(&self, item: &L) -> Option<&R> {
-        let left_pairing: &MappingPair<L> = self.get_left_inner(item)?;
-        match self.right_set.get(
-            left_pairing.hash,
-            does_map(&left_pairing.value, &self.left_set),
-        ) {
+        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+        let left_pairing: &MappingPair<L> = self.get_left_inner_with_hash(item, l_hash)?;
+        match self
+            .right_set
+            .get(left_pairing.hash, hash_and_id(l_hash, left_pairing.id))
+        {
             None => None,
             Some(pairing) => Some(&pairing.value),
         }
+    }
+
+    /// Removes a pair using the hash of the left item, right item, and their shared pairing id
+    fn get_via_hashes_and_id(&mut self, l_hash: u64, r_hash: u64, id: u64) -> Option<(&L, &R)> {
+        let left_pairing = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
+        let right_pairing = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
+        Some((&left_pairing.value, &right_pairing.value))
     }
 
     #[inline]
@@ -570,8 +525,18 @@ where
     }
 
     #[inline]
+    fn get_left_inner_with_hash(&self, item: &L, hash: u64) -> Option<&MappingPair<L>> {
+        self.left_set.get(hash, equivalent_key(item))
+    }
+
+    #[inline]
     fn get_right_inner(&self, item: &R) -> Option<&MappingPair<R>> {
         let hash = make_hash::<R, S>(&self.hash_builder, item);
+        self.right_set.get(hash, equivalent_key(item))
+    }
+
+    #[inline]
+    fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&MappingPair<R>> {
         self.right_set.get(hash, equivalent_key(item))
     }
 
@@ -582,10 +547,8 @@ where
     pub(crate) unsafe fn take_left(&mut self, item: &R) -> Option<MappingPair<L>> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_pairing: &MappingPair<R> = self.right_set.get(r_hash, equivalent_key(item))?;
-        self.left_set.remove_entry(
-            right_pairing.hash,
-            does_map(&right_pairing.value, &self.right_set),
-        )
+        self.left_set
+            .remove_entry(right_pairing.hash, hash_and_id(r_hash, right_pairing.id))
     }
 
     /// Takes an item from the right set and returns it (if it exists).
@@ -595,10 +558,8 @@ where
     pub(crate) unsafe fn take_right(&mut self, item: &L) -> Option<MappingPair<R>> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_pairing: &MappingPair<L> = self.left_set.get(l_hash, equivalent_key(item))?;
-        self.right_set.remove_entry(
-            left_pairing.hash,
-            does_map(&left_pairing.value, &self.left_set),
-        )
+        self.right_set
+            .remove_entry(left_pairing.hash, hash_and_id(l_hash, left_pairing.id))
     }
 
     pub fn iter(&self) -> Iter<'_, L, R, S> {
@@ -627,17 +588,18 @@ where
         F: FnMut(&L, &R) -> bool,
     {
         let mut iter = self.iter();
-        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
+        let mut to_drop: Vec<(u64, u64, u64)> = Vec::with_capacity(self.left_set.len());
         while let Some((left, right)) = iter.next() {
             if !f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                 let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-                to_drop.push((l_hash, r_hash));
+                let id = self.get_left_inner(left).unwrap().id;
+                to_drop.push((l_hash, r_hash, id));
             }
         }
         drop(iter);
-        for (l_hash, r_hash) in to_drop {
-            self.remove_via_hashes(l_hash, r_hash);
+        for (l_hash, r_hash, id) in to_drop {
+            self.remove_via_hashes_and_id(l_hash, r_hash, id);
         }
     }
 }
@@ -655,6 +617,7 @@ impl<L, R, S> CycleMap<L, R, S> {
     pub const fn with_hasher(hash_builder: S) -> Self {
         Self {
             hash_builder,
+            counter: 0,
             left_set: RawTable::new(),
             right_set: RawTable::new(),
         }
@@ -663,6 +626,7 @@ impl<L, R, S> CycleMap<L, R, S> {
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
             hash_builder,
+            counter: 0,
             left_set: RawTable::with_capacity(capacity),
             right_set: RawTable::with_capacity(capacity),
         }
@@ -891,30 +855,6 @@ mod tests {
             let r_pairing = right_opt.unwrap();
             assert_eq!(r_pairing.value, i_struct);
             assert_eq!(r_pairing.hash, l_hash);
-        }
-    }
-
-    #[test]
-    fn hash_access_tests() {
-        let mut map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let left_get_opt = map.get_right(&i_str);
-            assert!(left_get_opt.is_some());
-            let i_struct = TestingStruct::new(i, i.to_string());
-            assert_eq!(*left_get_opt.unwrap(), i_struct);
-            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-            let get_opt = map.get_via_hashes(l_hash, r_hash);
-            assert!(get_opt.is_some());
-            let (left, right) = get_opt.unwrap();
-            assert_eq!(*left, i_str);
-            assert_eq!(*right, i_struct);
-            let rem_opt = map.remove_via_hashes(l_hash, r_hash);
-            assert!(rem_opt.is_some());
-            let (left, right) = rem_opt.unwrap();
-            assert_eq!(left, i_str);
-            assert_eq!(right, i_struct);
         }
     }
 

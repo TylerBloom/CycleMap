@@ -68,6 +68,25 @@ where
     }
 }
 
+/// A [`SwapOptional`] contain the possible output from any `swap` method in a [`CycleMap`]. A
+/// "collision" occurs if the new item is equal to an existing item In which case, the existing
+/// cycle is removed. The plain `Collision` varient will only be returned from the `swap_or_insert`
+/// methods.
+///
+/// # Examples
+/// ```rust
+/// use cycle_map::optional_pair::SwapOptional;
+///
+/// let op: SwapOptional<u64, u64, String> = SwapOptional::ItemAndCollision(42, (43,
+/// "foo".to_string()));
+///
+/// match op {
+///     SwapOptional::NotFound => { /*...*/ },
+///     SwapOptional::Collision(pair) => { /*...*/ },
+///     SwapOptional::Item(item) => { /*...*/ },
+///     SwapOptional::ItemAndCollision(item, pair) => { /*...*/ },
+/// }
+/// ```
 #[derive(PartialEq, Eq)]
 pub enum SwapOptional<I, L, R>
 where
@@ -75,10 +94,21 @@ where
     L: PartialEq + Eq,
     R: PartialEq + Eq,
 {
-    None,
+    NotFound,
     Item(I),
-    Eq((L, R)),
-    ItemAndEq(I, (L, R)),
+    Collision((L, R)),
+    ItemAndCollision(I, (L, R)),
+}
+
+impl<I, L, R> SwapOptional<I, L, R> 
+where
+    I: PartialEq + Eq,
+    L: PartialEq + Eq,
+    R: PartialEq + Eq,
+{
+    pub fn not_found(&self) -> bool {
+        *self == SwapOptional::NotFound
+    }
 }
 
 impl<I, L, R> fmt::Debug for SwapOptional<I, L, R>
@@ -89,17 +119,17 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::None => {
-                write!(f, "None")
+            Self::NotFound => {
+                write!(f, "NotFound")
             }
             Self::Item(item) => {
                 write!(f, "Item({item:?})")
             }
-            Self::Eq(pair) => {
+            Self::Collision(pair) => {
                 write!(f, "Eq({pair:?})")
             }
-            Self::ItemAndEq(item, pair) => {
-                write!(f, "ItemAndEq( {item:?}, {pair:?})")
+            Self::ItemAndCollision(item, pair) => {
+                write!(f, "ItemAndCollision( {item:?}, {pair:?})")
             }
         }
     }
@@ -113,10 +143,10 @@ where
 {
     fn from(input: (Option<I>, Option<(L, R)>)) -> Self {
         match input {
-            (None, None) => Self::None,
+            (None, None) => Self::NotFound,
             (Some(item), None) => Self::Item(item),
-            (None, Some(pair)) => Self::Eq(pair),
-            (Some(item), Some(pair)) => Self::ItemAndEq(item, pair),
+            (None, Some(pair)) => Self::Collision(pair),
+            (Some(item), Some(pair)) => Self::ItemAndCollision(item, pair),
         }
     }
 }

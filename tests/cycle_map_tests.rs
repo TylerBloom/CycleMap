@@ -27,9 +27,12 @@ mod tests {
             self.hashable.hash(state)
         }
     }
-    
+
     #[test]
     fn construction_test() {
+        let map: CycleMap<String, TestingStruct> = CycleMap::new();
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.capacity(), 0);
         let mut map = construct_default_map();
         assert_eq!(map.len(), 10);
         let cap = map.capacity();
@@ -71,9 +74,9 @@ mod tests {
     fn remove_tests() {
         // Double remove
         let mut map: CycleMap<String, TestingStruct> = construct_default_map();
-        let opt = map.remove_via_right(&TestingStruct::from_value(42));
+        let opt = map.remove(&"42".to_string(), &TestingStruct::from_value(42));
         assert!(opt.is_none());
-        let opt = map.remove_via_right(&TestingStruct::from_value(0));
+        let opt = map.remove(&"0".to_string(), &TestingStruct::from_value(0));
         assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
         // Left remove
         let mut map: CycleMap<String, TestingStruct> = construct_default_map();
@@ -234,11 +237,13 @@ mod tests {
         }
     }
 
-    impl TestingStruct {
-        pub(crate) fn new(value: u64, data: String) -> Self {
-            Self { value, data }
-        }
+    #[test]
+    fn misc_tests() {
+        let map = construct_default_map();
+        assert!(!map.are_mapped(&"0".to_string(), &TestingStruct::from_value(1)));
+    }
 
+    impl TestingStruct {
         pub(crate) fn from_value(value: u64) -> Self {
             Self {
                 value,

@@ -82,6 +82,7 @@ mod tests {
         let opt = map.remove_via_right(&TestingStruct::from_value(0));
         assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
         // Right remove
+        let mut map: CycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.remove_via_left(&"42".to_string());
         assert!(opt.is_none());
         let opt = map.remove_via_left(&"0".to_string());

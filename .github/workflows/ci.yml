@@ -24,6 +24,7 @@ jobs:
       - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
       - run: cargo build --verbose
       - run: cargo test --verbose
+      - run: cargo doc --verbose
     
   coverage:
     name: Coverage
@@ -41,5 +42,3 @@ jobs:
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v2
-        with:
-          fail_ci_if_error: true

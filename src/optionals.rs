@@ -1,40 +1,61 @@
 use std::fmt;
 
-/// An InsertOptional represents a potentail tuple whose elements are potentail tuples. It is a
+/// An OptionalPair represents a potentail tuple whose elements are potentail tuples. It is a
 /// more ergonomic alternative to `Option<(Option<(L,R)>,Option<(L,R)>)>`, and is most often used
 /// as a return value for a map's insert method.
 ///
 /// # Examples
 /// ```rust
-/// use cycle_map::optionals::InsertOptional;
+/// use cycle_map::optionals::OptionalPair;
 ///
-/// let op: InsertOptional<String, String> = InsertOptional::SomeLeft(("Hello".to_string(),
-/// "World".to_string()));
+/// let op: OptionalPair<String, String> = OptionalPair::SomeLeft("Hello".to_string());
 ///
 /// match op {
-///     InsertOptional::None => { /*...*/ },
-///     InsertOptional::SomeLeft((left, right)) => { /*...*/ },
-///     InsertOptional::SomeRight(pair) => { /*...*/ },
-///     InsertOptional::SomeBoth(l_pair, r_pair) => { /*...*/ },
+///     OptionalPair::None => { /*...*/ },
+///     OptionalPair::SomeLeft(left) => { /*...*/ },
+///     OptionalPair::SomeRight(right) => { /*...*/ },
+///     OptionalPair::SomeBoth(left, right) => { /*...*/ },
 /// }
 /// ```
 #[derive(PartialEq, Eq)]
-pub enum InsertOptional<L, R>
+pub enum OptionalPair<L, R>
 where
-    L: PartialEq + Eq,
-    R: PartialEq + Eq,
+    L: Eq,
+    R: Eq,
 {
     /// Equivalent to `Option`'s `None` variant
     None,
     /// Equivalent to `Some(Some((left, right)), None)`
-    SomeLeft((L, R)),
+    SomeLeft(L),
     /// Equivalent to `Some(None, Some((left, right)))`
-    SomeRight((L, R)),
+    SomeRight(R),
     /// Equivalent to `Some(Some((l1, r1)), Some(l2, r2))`
-    SomeBoth((L, R), (L, R)),
+    SomeBoth(L, R),
 }
 
-impl<L, R> fmt::Debug for InsertOptional<L, R>
+/// A shorthand for an optional pair of tuples used in some map insert methods
+pub type InsertOptional<L, R> = OptionalPair<(L, R), (L, R)>;
+//pub type SwapOptional<I, P> = OptionalPair<I, P>;
+
+impl<L, R> OptionalPair<L, R>
+where
+    L: Eq,
+    R: Eq,
+{
+    /// Returns true if `self` is `OptionalPair::None` and false otherwise
+    pub fn is_none(&self) -> bool {
+        *self == OptionalPair::None
+    }
+
+    /// Returns the negation of [`is_none`]
+    ///
+    /// [`is_none`]: enum.OptionalPair.html#method.is_none
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+}
+
+impl<L, R> fmt::Debug for OptionalPair<L, R>
 where
     L: fmt::Debug + Eq,
     R: fmt::Debug + Eq,
@@ -44,120 +65,60 @@ where
             Self::None => {
                 write!(f, "None")
             }
-            Self::SomeLeft(pair) => {
-                write!(f, "SomeLeft( {pair:?} )")
+            Self::SomeLeft(item) => {
+                write!(f, "SomeLeft( {item:?} )")
             }
-            Self::SomeRight(pair) => {
-                write!(f, "SomeRight( {pair:?} )")
+            Self::SomeRight(item) => {
+                write!(f, "SomeRight( {item:?} )")
             }
-            Self::SomeBoth(l_pair, r_pair) => {
-                write!(f, "SomeBoth( {l_pair:?}, {r_pair:?} )")
+            Self::SomeBoth(l_item, r_item) => {
+                write!(f, "SomeBoth( {l_item:?}, {r_item:?} )")
             }
         }
     }
 }
 
-impl<L, R> From<(Option<(L, R)>, Option<(L, R)>)> for InsertOptional<L, R>
+impl<L, R> From<(Option<L>, Option<R>)> for OptionalPair<L, R>
 where
     L: Eq,
     R: Eq,
 {
-    fn from(input_pair: (Option<(L, R)>, Option<(L, R)>)) -> Self {
+    fn from(input_pair: (Option<L>, Option<R>)) -> Self {
         match input_pair {
-            (Some(pair_1), Some(pair_2)) => Self::SomeBoth(pair_1, pair_2),
-            (Some(inner_pair), None) => Self::SomeLeft(inner_pair),
-            (None, Some(inner_pair)) => Self::SomeRight(inner_pair),
-            (None, None) => InsertOptional::None,
+            (None, None) => Self::None,
+            (Some(item), None) => Self::SomeLeft(item),
+            (None, Some(item)) => Self::SomeRight(item),
+            (Some(item_1), Some(item_2)) => Self::SomeBoth(item_1, item_2),
         }
     }
 }
 
-/// A `SwapOptional` contain the possible output from any `swap` method in a [`CycleMap`]. A
-/// "collision" occurs if the new item is equal to an existing item In which case, the existing
-/// cycle is removed. The plain `Collision` variant will only be returned from the `swap_or_insert`
-/// methods.
-///
-/// # Examples
-/// ```rust
-/// use cycle_map::optionals::SwapOptional;
-///
-/// let op: SwapOptional<u64, u64, String> = SwapOptional::ItemAndCollision(42, (43,
-/// "foo".to_string()));
-///
-/// match op {
-///     SwapOptional::NotFound => { /*...*/ },
-///     SwapOptional::Collision(pair) => { /*...*/ },
-///     SwapOptional::Item(item) => { /*...*/ },
-///     SwapOptional::ItemAndCollision(item, pair) => { /*...*/ },
-/// }
-/// ```
-///
-/// [`CycleMap`]: ../cycle_map/struct.CycleMap.html
-#[derive(PartialEq, Eq)]
-pub enum SwapOptional<I, L, R>
+impl<L, R> From<Option<(Option<L>, Option<R>)>> for OptionalPair<L, R>
 where
-    I: PartialEq + Eq,
-    L: PartialEq + Eq,
-    R: PartialEq + Eq,
-{
-    /// The item to be swapped couldn't be found
-    NotFound,
-    /// The removed item from a swap
-    Item(I),
-    /// The pair that collided with the new item during a `swap_or_insert`
-    Collision((L, R)),
-    /// The removed item and pair that collided with the new item from a swap
-    ItemAndCollision(I, (L, R)),
-}
-
-impl<I, L, R> SwapOptional<I, L, R>
-where
-    I: PartialEq + Eq,
-    L: PartialEq + Eq,
-    R: PartialEq + Eq,
-{
-    /// Returns true if self is the `NotFound` variant and false otherwise.
-    pub fn not_found(&self) -> bool {
-        *self == SwapOptional::NotFound
-    }
-}
-
-impl<I, L, R> fmt::Debug for SwapOptional<I, L, R>
-where
-    I: fmt::Debug + Eq,
-    L: fmt::Debug + Eq,
-    R: fmt::Debug + Eq,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotFound => {
-                write!(f, "NotFound")
-            }
-            Self::Item(item) => {
-                write!(f, "Item({item:?})")
-            }
-            Self::Collision(pair) => {
-                write!(f, "Eq({pair:?})")
-            }
-            Self::ItemAndCollision(item, pair) => {
-                write!(f, "ItemAndCollision( {item:?}, {pair:?})")
-            }
-        }
-    }
-}
-
-impl<I, L, R> From<(Option<I>, Option<(L, R)>)> for SwapOptional<I, L, R>
-where
-    I: Eq,
     L: Eq,
     R: Eq,
 {
-    fn from(input: (Option<I>, Option<(L, R)>)) -> Self {
-        match input {
-            (None, None) => Self::NotFound,
-            (Some(item), None) => Self::Item(item),
-            (None, Some(pair)) => Self::Collision(pair),
-            (Some(item), Some(pair)) => Self::ItemAndCollision(item, pair),
+    fn from(input_pair: Option<(Option<L>, Option<R>)>) -> Self {
+        match input_pair {
+            None | Some((None, None)) => Self::None,
+            Some((Some(item), None)) => Self::SomeLeft(item),
+            Some((None, Some(item))) => Self::SomeRight(item),
+            Some((Some(item_1), Some(item_2))) => Self::SomeBoth(item_1, item_2),
+        }
+    }
+}
+
+impl<L, R> From<OptionalPair<L, R>> for Option<(Option<L>, Option<R>)>
+where
+    L: Eq,
+    R: Eq,
+{
+    fn from(input_pair: OptionalPair<L, R>) -> Self {
+        match input_pair {
+            OptionalPair::None => None,
+            OptionalPair::SomeLeft(item) => Some((Some(item), None)),
+            OptionalPair::SomeRight(item) => Some((None, Some(item))),
+            OptionalPair::SomeBoth(item_1, item_2) => Some((Some(item_1), Some(item_2))),
         }
     }
 }

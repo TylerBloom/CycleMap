@@ -2,7 +2,7 @@
 mod tests {
     use std::hash::{Hash, Hasher};
 
-    use cycle_map::{CycleMap, InsertOptional, OptionalPair};
+    use cycle_map::{OptionalPair, PartialCycleMap};
 
     #[derive(PartialEq, Eq, Hash, Debug)]
     struct TestingStruct {
@@ -10,7 +10,7 @@ mod tests {
         pub(crate) data: String,
     }
 
-    fn construct_default_map() -> CycleMap<String, TestingStruct> {
+    fn construct_default_map() -> PartialCycleMap<String, TestingStruct> {
         (0..10)
             .map(|i| (i.to_string(), TestingStruct::from_value(i)))
             .collect()
@@ -30,7 +30,7 @@ mod tests {
 
     #[test]
     fn construction_test() {
-        let map: CycleMap<String, TestingStruct> = CycleMap::new();
+        let map: PartialCycleMap<String, TestingStruct> = PartialCycleMap::new();
         assert_eq!(map.len(), 0);
         assert_eq!(map.capacity(), 0);
         let mut map = construct_default_map();
@@ -44,10 +44,10 @@ mod tests {
 
     #[test]
     fn insert_test() {
-        let mut map: CycleMap<u64, String> = CycleMap::with_capacity(100);
+        let mut map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
         for i in 0..100 {
             let opt = map.insert(i, i.to_string());
-            assert_eq!(opt, InsertOptional::None);
+            assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
         }
         assert_eq!(map.len(), 100);
         for (val, s) in map.iter() {
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn get_tests() {
-        let map: CycleMap<String, TestingStruct> = construct_default_map();
+        let map: PartialCycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.get_left(&TestingStruct::from_value(42));
         assert!(opt.is_none());
         let opt = map.get_left(&TestingStruct::from_value(0));
@@ -73,23 +73,29 @@ mod tests {
     #[test]
     fn remove_tests() {
         // Double remove
-        let mut map: CycleMap<String, TestingStruct> = construct_default_map();
+        let mut map: PartialCycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.remove(&"42".to_string(), &TestingStruct::from_value(42));
         assert!(opt.is_none());
         let opt = map.remove(&"0".to_string(), &TestingStruct::from_value(0));
         assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
         // Left remove
-        let mut map: CycleMap<String, TestingStruct> = construct_default_map();
+        let mut map: PartialCycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.remove_via_right(&TestingStruct::from_value(42));
         assert!(opt.is_none());
         let opt = map.remove_via_right(&TestingStruct::from_value(0));
-        assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
+        assert_eq!(
+            opt,
+            OptionalPair::SomeBoth("0".to_string(), TestingStruct::from_value(0))
+        );
         // Right remove
-        let mut map: CycleMap<String, TestingStruct> = construct_default_map();
+        let mut map: PartialCycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.remove_via_left(&"42".to_string());
         assert!(opt.is_none());
         let opt = map.remove_via_left(&"0".to_string());
-        assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
+        assert_eq!(
+            opt,
+            OptionalPair::SomeBoth("0".to_string(), TestingStruct::from_value(0))
+        );
     }
 
     #[test]
@@ -101,7 +107,7 @@ mod tests {
         // No collision
         let mut map = construct_default_map();
         let opt = map.swap_left(&"0".to_string(), "101".to_string());
-        assert_eq!(opt, OptionalPair::SomeLeft("0".to_string()));
+        assert_eq!(opt, Some(("0".to_string(), OptionalPair::None)));
         let opt = map.get_right(&"101".to_string());
         assert_eq!(opt, Some(&TestingStruct::from_value(0)));
         // With collision
@@ -109,10 +115,10 @@ mod tests {
         let opt = map.swap_left(&"0".to_string(), "1".to_string());
         assert_eq!(
             opt,
-            OptionalPair::SomeBoth(
+            Some((
                 "0".to_string(),
-                ("1".to_string(), TestingStruct::from_value(1))
-            )
+                OptionalPair::SomeBoth("1".to_string(), TestingStruct::from_value(1))
+            ))
         );
         let opt = map.get_right(&"1".to_string());
         assert_eq!(opt, Some(&TestingStruct::from_value(0)));
@@ -126,13 +132,13 @@ mod tests {
             &TestingStruct::from_value(1),
             "2".to_string(),
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, None);
         let opt = map.swap_left_checked(
             &"0".to_string(),
             &TestingStruct::from_value(0),
             "101".to_string(),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft("0".to_string()));
+        assert_eq!(opt, Some(("0".to_string(), OptionalPair::None)));
     }
 
     #[test]
@@ -169,7 +175,10 @@ mod tests {
             &TestingStruct::from_value(0),
             TestingStruct::from_value(101),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft(TestingStruct::from_value(0)));
+        assert_eq!(
+            opt,
+            Some((TestingStruct::from_value(0), OptionalPair::None))
+        );
         let opt = map.get_left(&TestingStruct::from_value(101));
         assert_eq!(opt, Some(&"0".to_string()));
         // With collision
@@ -177,10 +186,10 @@ mod tests {
         let opt = map.swap_right(&TestingStruct::from_value(0), TestingStruct::from_value(1));
         assert_eq!(
             opt,
-            OptionalPair::SomeBoth(
+            Some((
                 TestingStruct::from_value(0),
-                ("1".to_string(), TestingStruct::from_value(1))
-            )
+                OptionalPair::SomeBoth("1".to_string(), TestingStruct::from_value(1))
+            ))
         );
         let opt = map.get_left(&TestingStruct::from_value(1));
         assert_eq!(opt, Some(&"0".to_string()));
@@ -194,13 +203,16 @@ mod tests {
             &"0".to_string(),
             TestingStruct::from_value(2),
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, None);
         let opt = map.swap_right_checked(
             &TestingStruct::from_value(0),
             &"0".to_string(),
             TestingStruct::from_value(101),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft(TestingStruct::from_value(0)));
+        assert_eq!(
+            opt,
+            Some((TestingStruct::from_value(0), OptionalPair::None))
+        );
     }
 
     #[test]
@@ -223,10 +235,10 @@ mod tests {
 
     #[test]
     fn retain_test() {
-        let mut map: CycleMap<u64, String> = CycleMap::with_capacity(100);
+        let mut map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
         for i in 0..100 {
             let opt = map.insert(i, i.to_string());
-            assert_eq!(opt, InsertOptional::None);
+            assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
         }
         assert_eq!(map.len(), 100);
         map.retain(|x, _| x % 2 == 0);

@@ -17,7 +17,7 @@ use crate::utils::*;
 // Contains a value and the hash of the item that the value maps to.
 pub(crate) struct MappingPair<T> {
     pub(crate) value: T,
-    pub(crate) hash: u64,
+    pub(crate) hash: Option<u64>,
     pub(crate) id: u64,
 }
 
@@ -31,62 +31,34 @@ pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
     hash: u64,
     id: u64,
 ) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
-    move |x| id == x.id && hash == x.hash
+    move |x| id == x.id && Some(hash) == x.hash
 }
 
-/* Might be used in the future
-pub(crate) fn does_map<'a, P, Q>(
-    value: &'a P,
-    map_ref: &'a RawTable<MappingPair<P>>,
-) -> impl Fn(&MappingPair<Q>) -> bool + 'a
-where
-    P: Hash + PartialEq + Eq,
-    Q: Hash + PartialEq + Eq + ?Sized,
-{
-    move |pair| map_ref.get(pair.hash, equivalent_key(value)).is_some()
-}
-*/
-
-/// A hash map that supports bidirection searches.
+/// Similar to [`CycleMap`] but items might be not paired.
 ///
-/// CycleMap bijectively maps two sets of elements, i.e. every element always
-/// has a "companion". It does this while maintaining the same complexitity for "gets"
-/// as a traditional [`HashMap`] and while only keeping a single copy of each element.
-///
-/// It is implemented using two sets, a "left" and "right" set. On insert, the given pair
-/// of items is split. The left item is stored in the left set with the hash of the right item,
-/// likewise for the right item. As such, both the left and right types need to implement [`Eq`]
-/// and [`Hash`], and as with other hashed collections, it is a logic error for an item to be
-/// modified in such a way that the item's hash or its equality, as changes while it is in the bag.
-///
-/// Sorting values like this allows for look up on pair with a standard HashMap and makes resizes
-/// faster but is not with a cost. When inserting a new pair of elements, there is potentail for
-/// collision. This collision should be excendingly rare and can only happen upon inserting new
-/// elements. You can read more about what causes collisions [here]("").
-///
-/// [`HashMap`]: https://doc.rust-lang.org/std/collections/struct.HashMap.html
-pub struct CycleMap<L, R, St = DefaultHashBuilder> {
+/// [`CycleMap`]: crate.struct.CycleMap.html
+pub struct PartialCycleMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
     pub(crate) counter: u64,
     left_set: RawTable<MappingPair<L>>,
     right_set: RawTable<MappingPair<R>>,
 }
 
-impl<L, R> CycleMap<L, R, DefaultHashBuilder> {
+impl<L, R> PartialCycleMap<L, R, DefaultHashBuilder> {
     #[inline]
-    /// Creates a new CycleMap
+    /// Creates a new PartialCycleMap
     pub fn new() -> Self {
         Self::default()
     }
 
     #[inline]
-    /// Creates a new CycleMap whose inner sets each of the given capacity
+    /// Creates a new PartialCycleMap whose inner sets each of the given capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self::with_capacity_and_hasher(capacity, DefaultHashBuilder::default())
     }
 }
 
-impl<L, R, S> CycleMap<L, R, S>
+impl<L, R, S> PartialCycleMap<L, R, S>
 where
     L: Eq + Hash,
     R: Eq + Hash,
@@ -100,20 +72,20 @@ where
     /// There is a chance for collision here. Collision occurs when the map contains elements with
     /// identical hashes as the given left and right elements, and they are mapped to each other.
     /// In such a case, the old pair is returned and the new pair is inserted.
-    pub fn insert(&mut self, left: L, right: R) -> InsertOptional<L, R> {
+    pub fn insert(&mut self, left: L, right: R) -> (OptionalPair<L, R>, OptionalPair<L, R>) {
         let opt_from_left = self.remove_via_left(&left);
         let opt_from_right = self.remove_via_right(&right);
-        let digest = InsertOptional::from((opt_from_left, opt_from_right));
+        let digest = (opt_from_left, opt_from_right);
         let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
         let left_pairing = MappingPair {
             value: left,
-            hash: r_hash,
+            hash: Some(r_hash),
             id: self.counter,
         };
         let right_pairing = MappingPair {
             value: right,
-            hash: l_hash,
+            hash: Some(l_hash),
             id: self.counter,
         };
         self.counter += 1;
@@ -140,7 +112,7 @@ where
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => {
-                left.id == right.id && l_hash == right.hash && r_hash == left.hash
+                left.id == right.id && Some(l_hash) == right.hash && Some(r_hash) == left.hash
             }
             _ => false,
         }
@@ -149,46 +121,73 @@ where
     /// Removes a pair of items only if they are mapped together and returns the pair
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
         if self.are_mapped(left, right) {
-            self.remove_via_left(left)
+            Option::from(self.remove_via_left(left))
+                .map(|(opt_l, opt_r)| (opt_l.unwrap(), opt_r.unwrap()))
         } else {
             None
         }
     }
 
     /// Removes the given item from the left set and its associated item from the right set
-    pub fn remove_via_left(&mut self, item: &L) -> Option<(L, R)> {
+    pub fn remove_via_left(&mut self, item: &L) -> OptionalPair<L, R> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_pairing: MappingPair<L> =
-            self.left_set.remove_entry(l_hash, equivalent_key(item))?;
-        let right_pairing = self
-            .right_set
-            .remove_entry(left_pairing.hash, hash_and_id(l_hash, left_pairing.id))
-            .unwrap();
-        Some((left_pairing.extract(), right_pairing.extract()))
+            if let Some(p) = self.left_set.remove_entry(l_hash, equivalent_key(item)) {
+                p
+            } else {
+                return OptionalPair::None;
+            };
+        let right_value: Option<R> = if let Some(hash) = left_pairing.hash {
+            Some(
+                self.right_set
+                    .remove_entry(hash, hash_and_id(l_hash, left_pairing.id))
+                    .unwrap()
+                    .extract(),
+            )
+        } else {
+            None
+        };
+        OptionalPair::from((Some(left_pairing.extract()), right_value))
     }
 
     /// Removes the given item from the right set and its associated item from the left set
-    pub fn remove_via_right(&mut self, item: &R) -> Option<(L, R)> {
+    pub fn remove_via_right(&mut self, item: &R) -> OptionalPair<L, R> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_pairing: MappingPair<R> =
-            self.right_set.remove_entry(r_hash, equivalent_key(item))?;
-        let left_pairing = self
-            .left_set
-            .remove_entry(right_pairing.hash, hash_and_id(r_hash, right_pairing.id))
-            .unwrap();
-        Some((left_pairing.extract(), right_pairing.extract()))
+            if let Some(p) = self.right_set.remove_entry(r_hash, equivalent_key(item)) {
+                p
+            } else {
+                return OptionalPair::None;
+            };
+        let left_value: Option<L> = if let Some(hash) = right_pairing.hash {
+            Some(
+                self.left_set
+                    .remove_entry(hash, hash_and_id(r_hash, right_pairing.id))
+                    .unwrap()
+                    .extract(),
+            )
+        } else {
+            None
+        };
+        OptionalPair::from((left_value, Some(right_pairing.extract())))
     }
 
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
-    fn remove_via_hashes_and_id(&mut self, l_hash: u64, r_hash: u64, id: u64) -> Option<(L, R)> {
-        let left_pairing = self
+    fn remove_via_hashes_and_id(
+        &mut self,
+        l_hash: u64,
+        r_hash: u64,
+        id: u64,
+    ) -> OptionalPair<L, R> {
+        let left_opt = self
             .left_set
-            .remove_entry(l_hash, hash_and_id(r_hash, id))?;
-        let right_pairing = self
+            .remove_entry(l_hash, hash_and_id(r_hash, id))
+            .map(|opt_l| opt_l.extract());
+        let right_opt = self
             .right_set
             .remove_entry(r_hash, hash_and_id(l_hash, id))
-            .unwrap();
-        Some((left_pairing.extract(), right_pairing.extract()))
+            .map(|opt_r| opt_r.extract());
+        OptionalPair::from((left_opt, right_opt))
     }
 
     /// Swaps an item in the left set with another item, remaps the old item's associated right
@@ -198,25 +197,22 @@ where
     /// to another right item, that cycle is removed.
     ///
     /// If there is a collision, the old cycle is returned.
-    pub fn swap_left(&mut self, old: &L, new: L) -> OptionalPair<L, (L, R)> {
+    pub fn swap_left(&mut self, old: &L, new: L) -> Option<(L, OptionalPair<L, R>)> {
         // Check for Eq left item and remove that cycle if it exists
         let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
         // Find the old left pairing
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
-            Some(p) => p,
-            None => {
-                return OptionalPair::None;
-            }
-        };
-        // Use old left pairing to find right pairing
-        let r_pairing: &mut MappingPair<R> = self
-            .right_set
-            .get_mut(l_pairing.hash, hash_and_id(old_l_hash, l_pairing.id))
-            .unwrap();
-        // Updated right pairing
-        r_pairing.hash = new_l_hash;
+        let l_pairing: &MappingPair<L> = self.left_set.get(old_l_hash, equivalent_key(old))?;
+        if let Some(hash) = l_pairing.hash {
+            // Use old left pairing to find right pairing
+            let r_pairing: &mut MappingPair<R> = self
+                .right_set
+                .get_mut(hash, hash_and_id(old_l_hash, l_pairing.id))
+                .unwrap();
+            // Updated right pairing
+            r_pairing.hash = Some(new_l_hash);
+        }
         // Create new left pairing
         let new_left_pairing: MappingPair<L> = MappingPair {
             value: new,
@@ -236,17 +232,22 @@ where
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
         );
         // Return old left pairing
-        OptionalPair::from((Some(old_left_item), eq_opt))
+        Some((old_left_item, eq_opt))
     }
 
     /// Does what [`swap_left`] does, but fails to swap and returns None if the old item isn't
     /// mapped to the given right item.
     ///
-    /// [`swap_left`]: struct.CycleMap.html#method.swap_left
-    pub fn swap_left_checked(&mut self, old: &L, expected: &R, new: L) -> OptionalPair<L, (L, R)> {
+    /// [`swap_left`]: struct.PartialCycleMap.html#method.swap_left
+    pub fn swap_left_checked(
+        &mut self,
+        old: &L,
+        expected: &R,
+        new: L,
+    ) -> Option<(L, OptionalPair<L, R>)> {
         // Check if old and expected are mapped
         if !self.are_mapped(old, expected) {
-            return OptionalPair::None;
+            return None;
         }
         self.swap_left(old, new)
     }
@@ -254,21 +255,27 @@ where
     /// Does what [`swap_left`] does, but inserts a new pair if the old left item isn't in the map.
     /// None is returned on insert.
     ///
-    /// [`swap_left`]: struct.CycleMap.html#method.swap_left
+    /// [`swap_left`]: struct.PartialCycleMap.html#method.swap_left
     pub fn swap_left_or_insert(
         &mut self,
         old: &L,
         new: L,
         to_insert: R,
-    ) -> OptionalPair<L, (L, R)> {
+    ) -> OptionalPair<L, OptionalPair<L, R>> {
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
         if self.left_set.get(old_l_hash, equivalent_key(old)).is_some() {
-            self.swap_left(old, new)
+            match self.swap_left(old, new) {
+                None => OptionalPair::None,
+                Some((l, op)) => match op {
+                    OptionalPair::None => OptionalPair::SomeLeft(l),
+                    p => OptionalPair::SomeBoth(l, p),
+                },
+            }
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(new, to_insert) {
-                InsertOptional::None => OptionalPair::None,
-                InsertOptional::SomeRight(pair) => OptionalPair::SomeRight(pair),
+                (OptionalPair::None, OptionalPair::None) => OptionalPair::None,
+                (OptionalPair::None, pair) => OptionalPair::SomeRight(pair),
                 _ => {
                     unreachable!("There isn't a left item")
                 }
@@ -277,39 +284,35 @@ where
     }
 
     /// Pair of the collision checks done in the swap left methods
-    fn swap_left_eq_check(&mut self, old: &L, new: &L, new_hash: u64) -> Option<(L, R)> {
-        self.left_set.get(new_hash, equivalent_key(new))?;
-        if new != old {
+    fn swap_left_eq_check(&mut self, old: &L, new: &L, new_hash: u64) -> OptionalPair<L, R> {
+        let opt = self.left_set.get(new_hash, equivalent_key(new));
+        if opt.is_some() && new != old {
             // Remove the problem cycle
             self.remove_via_left(new)
         } else {
             // If old and new are the same, they we are updating an cycle
-            None
+            OptionalPair::None
         }
     }
 
     /// Swaps an item in the right set with another item, remaps the old item's associated left
     /// item, and returns the old right item
-    pub fn swap_right(&mut self, old: &R, new: R) -> OptionalPair<R, (L, R)> {
+    pub fn swap_right(&mut self, old: &R, new: R) -> Option<(R, OptionalPair<L, R>)> {
         // Check for Eq left item and remove that cycle if it exists
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
-            Some(p) => p,
-            None => {
-                return OptionalPair::None;
-            }
-        };
-        // Use old right pairing to find the left pairing
-        let l_pairing: &mut MappingPair<L> = self
-            .left_set
-            .get_mut(r_pairing.hash, hash_and_id(old_r_hash, r_pairing.id))
-            .unwrap();
-        // Updated left pairing
-        let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
-        l_pairing.hash = new_r_hash;
+        let r_pairing: &MappingPair<R> = self.right_set.get(old_r_hash, equivalent_key(old))?;
+        if let Some(hash) = r_pairing.hash {
+            // Use old right pairing to find the left pairing
+            let l_pairing: &mut MappingPair<L> = self
+                .left_set
+                .get_mut(hash, hash_and_id(old_r_hash, r_pairing.id))
+                .unwrap();
+            // Updated left pairing
+            l_pairing.hash = Some(new_r_hash);
+        }
         // Create new right pairing
         let new_right_pairing = MappingPair {
             value: new,
@@ -329,17 +332,22 @@ where
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
         );
         // Return old right pairing
-        OptionalPair::from((Some(old_right_item), eq_opt))
+        Some((old_right_item, eq_opt))
     }
 
     /// Does what [`swap_right`] does, but fails to swap if the old item isn't mapped to the given
     /// left item.
     ///
-    /// [`swap_right`]: struct.CycleMap.html#method.swap_right
-    pub fn swap_right_checked(&mut self, old: &R, expected: &L, new: R) -> OptionalPair<R, (L, R)> {
+    /// [`swap_right`]: struct.PartialCycleMap.html#method.swap_right
+    pub fn swap_right_checked(
+        &mut self,
+        old: &R,
+        expected: &L,
+        new: R,
+    ) -> Option<(R, OptionalPair<L, R>)> {
         // Check if old and expected are mapped
         if !self.are_mapped(expected, old) {
-            return OptionalPair::None;
+            return None;
         } // Things can be removed after this point
         self.swap_right(old, new)
     }
@@ -347,13 +355,13 @@ where
     /// Does what [`swap_right`] does, but inserts a new pair if the old right item isn't in the map
     /// None is returned on insert.
     ///
-    /// [`swap_right`]: struct.CycleMap.html#method.swap_right
+    /// [`swap_right`]: struct.PartialCycleMap.html#method.swap_right
     pub fn swap_right_or_insert(
         &mut self,
         old: &R,
         new: R,
         to_insert: L,
-    ) -> OptionalPair<R, (L, R)> {
+    ) -> OptionalPair<R, OptionalPair<L, R>> {
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
         if self
@@ -361,12 +369,18 @@ where
             .get(old_r_hash, equivalent_key(old))
             .is_some()
         {
-            self.swap_right(old, new)
+            match self.swap_right(old, new) {
+                None => OptionalPair::None,
+                Some((r, op)) => match op {
+                    OptionalPair::None => OptionalPair::SomeLeft(r),
+                    p => OptionalPair::SomeBoth(r, p),
+                },
+            }
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(to_insert, new) {
-                InsertOptional::None => OptionalPair::None,
-                InsertOptional::SomeRight(pair) => OptionalPair::SomeRight(pair),
+                (OptionalPair::None, OptionalPair::None) => OptionalPair::None,
+                (pair, OptionalPair::None) => OptionalPair::SomeRight(pair),
                 _ => {
                     unreachable!("There isn't a left item")
                 }
@@ -375,14 +389,14 @@ where
     }
 
     /// Pair of the collision checks done in the swap left methods
-    fn swap_right_eq_check(&mut self, old: &R, new: &R, new_hash: u64) -> Option<(L, R)> {
-        self.right_set.get(new_hash, equivalent_key(new))?;
-        if new != old {
+    fn swap_right_eq_check(&mut self, old: &R, new: &R, new_hash: u64) -> OptionalPair<L, R> {
+        let opt = self.right_set.get(new_hash, equivalent_key(new));
+        if opt.is_some() && new != old {
             // Remove the problem cycle
             self.remove_via_right(new)
         } else {
             // If old and new are the same, they we are updating an cycle
-            None
+            OptionalPair::None
         }
     }
 
@@ -390,9 +404,10 @@ where
     pub fn get_left(&self, item: &R) -> Option<&L> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_pairing: &MappingPair<R> = self.get_right_inner_with_hash(item, r_hash)?;
+        let hash = right_pairing.hash?;
         match self
             .left_set
-            .get(right_pairing.hash, hash_and_id(r_hash, right_pairing.id))
+            .get(hash, hash_and_id(r_hash, right_pairing.id))
         {
             None => None,
             Some(pairing) => Some(&pairing.value),
@@ -403,9 +418,10 @@ where
     pub fn get_right(&self, item: &L) -> Option<&R> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_pairing: &MappingPair<L> = self.get_left_inner_with_hash(item, l_hash)?;
+        let hash = left_pairing.hash?;
         match self
             .right_set
-            .get(left_pairing.hash, hash_and_id(l_hash, left_pairing.id))
+            .get(hash, hash_and_id(l_hash, left_pairing.id))
         {
             None => None,
             Some(pairing) => Some(&pairing.value),
@@ -514,7 +530,7 @@ where
     }
 }
 
-impl<L, R, S> Default for CycleMap<L, R, S>
+impl<L, R, S> Default for PartialCycleMap<L, R, S>
 where
     S: Default,
 {
@@ -523,7 +539,7 @@ where
     }
 }
 
-impl<L, R, S> fmt::Debug for CycleMap<L, R, S>
+impl<L, R, S> fmt::Debug for PartialCycleMap<L, R, S>
 where
     L: Hash + Eq + fmt::Debug,
     R: Hash + Eq + fmt::Debug,
@@ -534,7 +550,7 @@ where
     }
 }
 
-impl<L, R, S> PartialEq<CycleMap<L, R, S>> for CycleMap<L, R, S>
+impl<L, R, S> PartialEq<PartialCycleMap<L, R, S>> for PartialCycleMap<L, R, S>
 where
     L: Hash + Eq + fmt::Debug,
     R: Hash + Eq + fmt::Debug,
@@ -548,7 +564,7 @@ where
     }
 }
 
-impl<L, R, S> Eq for CycleMap<L, R, S>
+impl<L, R, S> Eq for PartialCycleMap<L, R, S>
 where
     L: Hash + Eq + fmt::Debug,
     R: Hash + Eq + fmt::Debug,
@@ -556,8 +572,8 @@ where
 {
 }
 
-impl<L, R, S> CycleMap<L, R, S> {
-    /// Creates a CycleMap that uses the given hasher
+impl<L, R, S> PartialCycleMap<L, R, S> {
+    /// Creates a PartialCycleMap that uses the given hasher
     pub const fn with_hasher(hash_builder: S) -> Self {
         Self {
             hash_builder,
@@ -567,7 +583,7 @@ impl<L, R, S> CycleMap<L, R, S> {
         }
     }
 
-    /// Creates a CycleMap that uses the given hasher and whose inner sets each have the given capacity
+    /// Creates a PartialCycleMap that uses the given hasher and whose inner sets each have the given capacity
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
             hash_builder,
@@ -614,7 +630,7 @@ impl<L, R, S> CycleMap<L, R, S> {
     }
 }
 
-impl<L, R, S> Extend<(L, R)> for CycleMap<L, R, S>
+impl<L, R, S> Extend<(L, R)> for PartialCycleMap<L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -628,22 +644,22 @@ where
     }
 }
 
-impl<L, R> FromIterator<(L, R)> for CycleMap<L, R>
+impl<L, R> FromIterator<(L, R)> for PartialCycleMap<L, R>
 where
     L: Hash + Eq,
     R: Hash + Eq,
 {
     fn from_iter<T: IntoIterator<Item = (L, R)>>(iter: T) -> Self {
-        let mut digest = CycleMap::default();
+        let mut digest = PartialCycleMap::default();
         digest.extend(iter);
         digest
     }
 }
 
-/// An iterator over the entry pairs of a `CycleMap`.
+/// An iterator over the entry pairs of a `PartialCycleMap`.
 pub struct Iter<'a, L, R, S> {
     left_iter: RawIter<MappingPair<L>>,
-    map_ref: &'a CycleMap<L, R, S>,
+    map_ref: &'a PartialCycleMap<L, R, S>,
 }
 
 impl<L, R, S> Clone for Iter<'_, L, R, S> {
@@ -708,7 +724,7 @@ where
 {
 }
 
-/// An iterator over the left elements of a `CycleMap`.
+/// An iterator over the left elements of a `PartialCycleMap`.
 pub struct SingleIter<'a, T> {
     iter: RawIter<MappingPair<T>>,
     marker: PhantomData<&'a T>,
@@ -804,7 +820,7 @@ impl<T: fmt::Debug> fmt::Debug for MappingPair<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "MappingPair {{ value: {:?}, hash: {}, id: {} }}",
+            "MappingPair {{ value: {:?}, hash: {:?}, id: {} }}",
             self.value, self.hash, self.id
         )
     }
@@ -814,7 +830,7 @@ impl<T: fmt::Debug> fmt::Debug for MappingPair<T> {
 mod tests {
     use std::hash::Hash;
 
-    use super::CycleMap;
+    use super::PartialCycleMap;
 
     #[derive(PartialEq, Eq, Hash, Debug)]
     struct TestingStruct {
@@ -822,7 +838,7 @@ mod tests {
         pub(crate) data: String,
     }
 
-    fn construct_default_map() -> CycleMap<String, TestingStruct> {
+    fn construct_default_map() -> PartialCycleMap<String, TestingStruct> {
         (0..100)
             .map(|i| (i.to_string(), TestingStruct::new(i, i.to_string())))
             .collect()

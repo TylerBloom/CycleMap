@@ -1,12 +1,12 @@
 use std::fmt;
 
-/// An [`InsertOptional`] represents a potentail tuple whose elements are potentail tuples. It is a
+/// An InsertOptional represents a potentail tuple whose elements are potentail tuples. It is a
 /// more ergonomic alternative to `Option<(Option<(L,R)>,Option<(L,R)>)>`, and is most often used
 /// as a return value for a map's insert method.
 ///
 /// # Examples
 /// ```rust
-/// use cycle_map::optional_pair::InsertOptional;
+/// use cycle_map::optionals::InsertOptional;
 ///
 /// let op: InsertOptional<String, String> = InsertOptional::SomeLeft(("Hello".to_string(),
 /// "World".to_string()));
@@ -24,9 +24,13 @@ where
     L: PartialEq + Eq,
     R: PartialEq + Eq,
 {
+    /// Equivalent to `Option`'s `None` variant
     None,
+    /// Equivalent to `Some(Some((left, right)), None)`
     SomeLeft((L, R)),
+    /// Equivalent to `Some(None, Some((left, right)))`
     SomeRight((L, R)),
+    /// Equivalent to `Some(Some((l1, r1)), Some(l2, r2))`
     SomeBoth((L, R), (L, R)),
 }
 
@@ -68,14 +72,14 @@ where
     }
 }
 
-/// A [`SwapOptional`] contain the possible output from any `swap` method in a [`CycleMap`]. A
+/// A `SwapOptional` contain the possible output from any `swap` method in a [`CycleMap`]. A
 /// "collision" occurs if the new item is equal to an existing item In which case, the existing
-/// cycle is removed. The plain `Collision` varient will only be returned from the `swap_or_insert`
+/// cycle is removed. The plain `Collision` variant will only be returned from the `swap_or_insert`
 /// methods.
 ///
 /// # Examples
 /// ```rust
-/// use cycle_map::optional_pair::SwapOptional;
+/// use cycle_map::optionals::SwapOptional;
 ///
 /// let op: SwapOptional<u64, u64, String> = SwapOptional::ItemAndCollision(42, (43,
 /// "foo".to_string()));
@@ -96,9 +100,13 @@ where
     L: PartialEq + Eq,
     R: PartialEq + Eq,
 {
+    /// The item to be swapped couldn't be found
     NotFound,
+    /// The removed item from a swap
     Item(I),
+    /// The pair that collided with the new item during a `swap_or_insert`
     Collision((L, R)),
+    /// The removed item and pair that collided with the new item from a swap
     ItemAndCollision(I, (L, R)),
 }
 
@@ -108,6 +116,7 @@ where
     L: PartialEq + Eq,
     R: PartialEq + Eq,
 {
+    /// Returns true if self is the `NotFound` variant and false otherwise.
     pub fn not_found(&self) -> bool {
         *self == SwapOptional::NotFound
     }

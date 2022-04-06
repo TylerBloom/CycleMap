@@ -2,7 +2,7 @@
 mod tests {
     use std::hash::{Hash, Hasher};
 
-    use cycle_map::{cycle_map::CycleMap, optional_pair::*};
+    use cycle_map::{cycle_map::CycleMap, optionals::*};
 
     #[derive(PartialEq, Eq, Hash, Debug)]
     struct TestingStruct {

@@ -1,7 +1,4 @@
-use core::{borrow::Borrow, mem};
 use std::{
-    borrow::BorrowMut,
-    collections::{hash_map::RandomState, HashMap},
     default::Default,
     fmt,
     hash::{BuildHasher, Hash},
@@ -11,15 +8,48 @@ use std::{
 
 use hashbrown::{
     hash_map::DefaultHashBuilder,
-    raw::{RawDrain, RawIntoIter, RawIter, RawTable},
+    raw::{RawIter, RawTable},
 };
 
-use crate::optional_pair::{InsertOptional, SwapOptional};
+use crate::optionals::{InsertOptional, SwapOptional};
 use crate::utils::*;
+
+// Contains a value and the hash of the item that the value maps to.
+pub(crate) struct MappingPair<T> {
+    pub(crate) value: T,
+    pub(crate) hash: u64,
+    pub(crate) id: u64,
+}
+
+pub(crate) fn equivalent_key<Q: PartialEq + ?Sized>(
+    k: &Q,
+) -> impl Fn(&MappingPair<Q>) -> bool + '_ {
+    move |x| k.eq(&x.value)
+}
+
+pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
+    hash: u64,
+    id: u64,
+) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
+    move |x| id == x.id && hash == x.hash
+}
+
+/* Might be used in the future
+pub(crate) fn does_map<'a, P, Q>(
+    value: &'a P,
+    map_ref: &'a RawTable<MappingPair<P>>,
+) -> impl Fn(&MappingPair<Q>) -> bool + 'a
+where
+    P: Hash + PartialEq + Eq,
+    Q: Hash + PartialEq + Eq + ?Sized,
+{
+    move |pair| map_ref.get(pair.hash, equivalent_key(value)).is_some()
+}
+*/
 
 /// A hash map that supports bidirection searches.
 ///
-/// [`CycleMap`] bijectively maps two sets of elements, i.e. every element always
+/// CycleMap bijectively maps two sets of elements, i.e. every element always
 /// has a "companion". It does this while maintaining the same complexitity for "gets"
 /// as a traditional [`HashMap`] and while only keeping a single copy of each element.
 ///
@@ -33,6 +63,8 @@ use crate::utils::*;
 /// faster but is not with a cost. When inserting a new pair of elements, there is potentail for
 /// collision. This collision should be excendingly rare and can only happen upon inserting new
 /// elements. You can read more about what causes collisions [here]("").
+///
+/// [`HashMap`]: https://doc.rust-lang.org/std/collections/struct.HashMap.html
 pub struct CycleMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
     pub(crate) counter: u64,
@@ -42,11 +74,13 @@ pub struct CycleMap<L, R, St = DefaultHashBuilder> {
 
 impl<L, R> CycleMap<L, R, DefaultHashBuilder> {
     #[inline]
+    /// Creates a new CycleMap
     pub fn new() -> Self {
         Self::default()
     }
 
     #[inline]
+    /// Creates a new CycleMap whose inner sets each of the given capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self::with_capacity_and_hasher(capacity, DefaultHashBuilder::default())
     }
@@ -112,6 +146,15 @@ where
         }
     }
 
+    /// Removes a pair of items only if they are mapped together and returns the pair
+    pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
+        if self.are_mapped(left, right) {
+            self.remove_via_left(left)
+        } else {
+            None
+        }
+    }
+
     /// Removes the given item from the left set and its associated item from the right set
     pub fn remove_via_left(&mut self, item: &L) -> Option<(L, R)> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
@@ -148,15 +191,6 @@ where
         Some((left_pairing.extract(), right_pairing.extract()))
     }
 
-    /// Removes a pair of items only if they are mapped together and returns the pair
-    pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
-        if self.are_mapped(left, right) {
-            self.remove_via_left(left)
-        } else {
-            None
-        }
-    }
-
     /// Swaps an item in the left set with another item, remaps the old item's associated right
     /// item, and returns the old left item.
     ///
@@ -190,7 +224,6 @@ where
             id: l_pairing.id,
         };
         // Remove old left pairing
-        drop(l_pairing);
         let old_left_item: L = self
             .left_set
             .remove_entry(old_l_hash, equivalent_key(old))
@@ -224,7 +257,7 @@ where
     /// [`swap_left`]: struct.CycleMap.html#method.swap_left
     pub fn swap_left_or_insert(&mut self, old: &L, new: L, to_insert: R) -> SwapOptional<L, L, R> {
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        if let Some(_) = self.left_set.get(old_l_hash, equivalent_key(old)) {
+        if self.left_set.get(old_l_hash, equivalent_key(old)).is_some() {
             self.swap_left(old, new)
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
@@ -279,7 +312,6 @@ where
             id: r_pairing.id,
         };
         // Remove old right pairing
-        drop(r_pairing);
         let old_right_item: R = self
             .right_set
             .remove_entry(old_r_hash, equivalent_key(old))
@@ -314,7 +346,7 @@ where
     pub fn swap_right_or_insert(&mut self, old: &R, new: R, to_insert: L) -> SwapOptional<R, L, R> {
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        if let Some(_) = self.right_set.get(old_r_hash, equivalent_key(old)) {
+        if self.right_set.get(old_r_hash, equivalent_key(old)).is_some() {
             self.swap_right(old, new)
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
@@ -366,12 +398,14 @@ where
         }
     }
 
+    /* Might be used in the future
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
     fn get_via_hashes_and_id(&mut self, l_hash: u64, r_hash: u64, id: u64) -> Option<(&L, &R)> {
         let left_pairing = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
         let right_pairing = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
         Some((&left_pairing.value, &right_pairing.value))
     }
+    */
 
     #[inline]
     fn get_left_inner(&self, item: &L) -> Option<&MappingPair<L>> {
@@ -384,17 +418,20 @@ where
         self.left_set.get(hash, equivalent_key(item))
     }
 
+    /* Might be used in the future
     #[inline]
     fn get_right_inner(&self, item: &R) -> Option<&MappingPair<R>> {
         let hash = make_hash::<R, S>(&self.hash_builder, item);
         self.right_set.get(hash, equivalent_key(item))
     }
+    */
 
     #[inline]
     fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&MappingPair<R>> {
         self.right_set.get(hash, equivalent_key(item))
     }
 
+    /* Likely to be used in the Drain iterator
     /// Takes an item from the left set and returns it (if it exists).
     ///
     /// This method is unsafe since removing the item break a cycle in the map.
@@ -416,7 +453,9 @@ where
         self.right_set
             .remove_entry(left_pairing.hash, hash_and_id(l_hash, left_pairing.id))
     }
+    */
 
+    /// Returns an iterator over the pairs in the map
     pub fn iter(&self) -> Iter<'_, L, R, S> {
         Iter {
             left_iter: unsafe { self.left_set.iter() },
@@ -424,6 +463,7 @@ where
         }
     }
 
+    /// Returns an iterator over elements in the left set
     pub fn iter_left(&self) -> SingleIter<'_, L> {
         SingleIter {
             iter: unsafe { self.left_set.iter() },
@@ -431,6 +471,7 @@ where
         }
     }
 
+    /// Returns an iterator over elements in the right set
     pub fn iter_right(&self) -> SingleIter<'_, R> {
         SingleIter {
             iter: unsafe { self.right_set.iter() },
@@ -438,13 +479,14 @@ where
         }
     }
 
+    /// Drops all pairs that cause the predicate to return `false` while keeping the backing memory
+    /// allocated
     pub fn retain<F>(&mut self, mut f: F)
     where
         F: FnMut(&L, &R) -> bool,
     {
-        let mut iter = self.iter();
         let mut to_drop: Vec<(u64, u64, u64)> = Vec::with_capacity(self.left_set.len());
-        while let Some((left, right)) = iter.next() {
+        for (left, right) in self.iter() {
             if !f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                 let r_hash = make_hash::<R, S>(&self.hash_builder, right);
@@ -452,7 +494,6 @@ where
                 to_drop.push((l_hash, r_hash, id));
             }
         }
-        drop(iter);
         for (l_hash, r_hash, id) in to_drop {
             self.remove_via_hashes_and_id(l_hash, r_hash, id);
         }
@@ -468,7 +509,41 @@ where
     }
 }
 
+impl<L, R, S> fmt::Debug for CycleMap<L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_set().entries(self.iter()).finish()
+    }
+}
+
+impl<L, R, S> PartialEq<CycleMap<L, R, S>> for CycleMap<L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        self.iter().all(|(l, r)| other.are_mapped(l, r))
+    }
+}
+
+impl<L, R, S> Eq for CycleMap<L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+}
+
 impl<L, R, S> CycleMap<L, R, S> {
+    /// Creates a CycleMap that uses the given hasher
     pub const fn with_hasher(hash_builder: S) -> Self {
         Self {
             hash_builder,
@@ -478,6 +553,7 @@ impl<L, R, S> CycleMap<L, R, S> {
         }
     }
 
+    /// Creates a CycleMap that uses the given hasher and whose inner sets each have the given capacity
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
             hash_builder,
@@ -487,29 +563,37 @@ impl<L, R, S> CycleMap<L, R, S> {
         }
     }
 
+    /// Returns a reference to the hasher used by the map
     pub fn hasher(&self) -> &S {
         &self.hash_builder
     }
 
+    /// Returns the capacity of the inner sets (both sets have the same capacity)
     pub fn capacity(&self) -> usize {
         // The size of the sets is always equal
         self.left_set.capacity()
     }
 
+    /* Might be used in the future
+    /// Returns the raw capacity of the inner sets (same between sets)
     fn raw_capacity(&self) -> usize {
         // The size of the sets is always equal
         self.left_set.buckets()
     }
+    */
 
+    /// Returns the len of the inner sets (same between sets)
     pub fn len(&self) -> usize {
         // The size of the sets is always equal
         self.left_set.len()
     }
 
+    /// Returns true if no items are in the map and false otherwise
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Removes all pairs for the set while keeping the backing memory allocated
     pub fn clear(&mut self) {
         self.left_set.clear();
         self.right_set.clear();
@@ -580,7 +664,7 @@ where
         match self.left_iter.next() {
             Some(l) => unsafe {
                 let left = &l.as_ref().value;
-                let right = self.map_ref.get_right(&left).unwrap();
+                let right = self.map_ref.get_right(left).unwrap();
                 Some((left, right))
             },
             None => None,
@@ -665,12 +749,56 @@ where
 
 impl<T> FusedIterator for SingleIter<'_, T> where T: Hash + Eq {}
 
+impl<T> MappingPair<T> {
+    // Consumes the pair and returns the held `T`
+    pub(crate) fn extract(self) -> T {
+        self.value
+    }
+}
+
+impl<T: Hash> Hash for MappingPair<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state)
+    }
+}
+
+impl<T: PartialEq> PartialEq for MappingPair<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id.eq(&other.id) && self.value.eq(&other.value)
+    }
+}
+
+impl<T: PartialEq> PartialEq<T> for MappingPair<T> {
+    fn eq(&self, other: &T) -> bool {
+        self.value.eq(other)
+    }
+}
+
+impl<T: Eq> Eq for MappingPair<T> {}
+
+impl<T: Clone> Clone for MappingPair<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            hash: self.hash,
+            id: self.id,
+        }
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for MappingPair<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MappingPair {{ value: {:?}, hash: {}, id: {} }}",
+            self.value, self.hash, self.id
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use hashbrown::hash_map::DefaultHashBuilder;
-    use std::hash::{BuildHasher, Hash};
-
-    use crate::utils::make_hash;
+    use std::hash::Hash;
 
     use super::CycleMap;
 
@@ -692,6 +820,7 @@ mod tests {
         assert_eq!(map.len(), 100);
     }
 
+    /* Might be needed in the future
     #[test]
     fn get_inner_tests() {
         let map = construct_default_map();
@@ -712,7 +841,9 @@ mod tests {
             assert_eq!(r_pairing.hash, l_hash);
         }
     }
+    */
 
+    /* Should the take methods be needed for the drain iters, these tests will make a return
     #[test]
     fn take_left_tests() {
         let mut map = construct_default_map();
@@ -742,6 +873,7 @@ mod tests {
             assert_eq!(pairing.hash, l_hash);
         }
     }
+    */
 
     impl TestingStruct {
         pub(crate) fn new(value: u64, data: String) -> Self {

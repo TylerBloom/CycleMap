@@ -87,6 +87,8 @@ where
 ///     SwapOptional::ItemAndCollision(item, pair) => { /*...*/ },
 /// }
 /// ```
+///
+/// [`CycleMap`]: ../cycle_map/struct.CycleMap.html
 #[derive(PartialEq, Eq)]
 pub enum SwapOptional<I, L, R>
 where
@@ -100,7 +102,7 @@ where
     ItemAndCollision(I, (L, R)),
 }
 
-impl<I, L, R> SwapOptional<I, L, R> 
+impl<I, L, R> SwapOptional<I, L, R>
 where
     I: PartialEq + Eq,
     L: PartialEq + Eq,

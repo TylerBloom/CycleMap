@@ -27,6 +27,17 @@ mod tests {
             self.hashable.hash(state)
         }
     }
+    
+    #[test]
+    fn construction_test() {
+        let mut map = construct_default_map();
+        assert_eq!(map.len(), 10);
+        let cap = map.capacity();
+        map.clear();
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.capacity(), cap);
+    }
 
     #[test]
     fn insert_test() {
@@ -44,10 +55,38 @@ mod tests {
     }
 
     #[test]
-    fn get_tests() {}
+    fn get_tests() {
+        let map: CycleMap<String, TestingStruct> = construct_default_map();
+        let opt = map.get_left(&TestingStruct::from_value(42));
+        assert!(opt.is_none());
+        let opt = map.get_left(&TestingStruct::from_value(0));
+        assert_eq!(opt, Some(&"0".to_string()));
+        let opt = map.get_right(&"42".to_string());
+        assert!(opt.is_none());
+        let opt = map.get_right(&"0".to_string());
+        assert_eq!(opt, Some(&TestingStruct::from_value(0)));
+    }
 
     #[test]
-    fn remove_tests() {}
+    fn remove_tests() {
+        // Double remove
+        let mut map: CycleMap<String, TestingStruct> = construct_default_map();
+        let opt = map.remove_via_right(&TestingStruct::from_value(42));
+        assert!(opt.is_none());
+        let opt = map.remove_via_right(&TestingStruct::from_value(0));
+        assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
+        // Left remove
+        let mut map: CycleMap<String, TestingStruct> = construct_default_map();
+        let opt = map.remove_via_right(&TestingStruct::from_value(42));
+        assert!(opt.is_none());
+        let opt = map.remove_via_right(&TestingStruct::from_value(0));
+        assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
+        // Right remove
+        let opt = map.remove_via_left(&"42".to_string());
+        assert!(opt.is_none());
+        let opt = map.remove_via_left(&"0".to_string());
+        assert_eq!(opt, Some(("0".to_string(), TestingStruct::from_value(0))));
+    }
 
     #[test]
     fn swap_left_not_found_test() {
@@ -115,11 +154,17 @@ mod tests {
     fn swap_right_not_found_test() {
         // Not Found
         let mut map = construct_default_map();
-        let opt = map.swap_right(&TestingStruct::from_value(101), TestingStruct::from_value(102));
+        let opt = map.swap_right(
+            &TestingStruct::from_value(101),
+            TestingStruct::from_value(102),
+        );
         assert!(opt.not_found());
         // No collision
         let mut map = construct_default_map();
-        let opt = map.swap_right(&TestingStruct::from_value(0), TestingStruct::from_value(101));
+        let opt = map.swap_right(
+            &TestingStruct::from_value(0),
+            TestingStruct::from_value(101),
+        );
         assert_eq!(opt, SwapOptional::Item(TestingStruct::from_value(0)));
         let opt = map.get_left(&TestingStruct::from_value(101));
         assert_eq!(opt, Some(&"0".to_string()));

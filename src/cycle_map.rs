@@ -301,7 +301,7 @@ where
     /// [`swap_right`]: struct.CycleMap.html#method.swap_right
     pub fn swap_right_checked(&mut self, old: &R, expected: &L, new: R) -> SwapOptional<R, L, R> {
         // Check if old and expected are mapped
-        if ! self.are_mapped(expected, old) {
+        if !self.are_mapped(expected, old) {
             return SwapOptional::NotFound;
         } // Things can be removed after this point
         self.swap_right(old, new)

@@ -107,7 +107,7 @@ mod tests {
         // No collision
         let mut map = construct_default_map();
         let opt = map.swap_left(&"0".to_string(), "101".to_string());
-        assert_eq!(opt, Some(("0".to_string(), OptionalPair::None)));
+        assert_eq!(opt, OptionalPair::SomeLeft("0".to_string()));
         let opt = map.get_right(&"101".to_string());
         assert_eq!(opt, Some(&TestingStruct::from_value(0)));
         // With collision
@@ -115,10 +115,10 @@ mod tests {
         let opt = map.swap_left(&"0".to_string(), "1".to_string());
         assert_eq!(
             opt,
-            Some((
+            OptionalPair::SomeBoth(
                 "0".to_string(),
                 OptionalPair::SomeBoth("1".to_string(), TestingStruct::from_value(1))
-            ))
+            )
         );
         let opt = map.get_right(&"1".to_string());
         assert_eq!(opt, Some(&TestingStruct::from_value(0)));
@@ -132,13 +132,13 @@ mod tests {
             &TestingStruct::from_value(1),
             "2".to_string(),
         );
-        assert_eq!(opt, None);
+        assert_eq!(opt, OptionalPair::None);
         let opt = map.swap_left_checked(
             &"0".to_string(),
             &TestingStruct::from_value(0),
             "101".to_string(),
         );
-        assert_eq!(opt, Some(("0".to_string(), OptionalPair::None)));
+        assert_eq!(opt, OptionalPair::SomeLeft("0".to_string()));
     }
 
     #[test]
@@ -175,10 +175,7 @@ mod tests {
             &TestingStruct::from_value(0),
             TestingStruct::from_value(101),
         );
-        assert_eq!(
-            opt,
-            Some((TestingStruct::from_value(0), OptionalPair::None))
-        );
+        assert_eq!(opt, OptionalPair::SomeLeft(TestingStruct::from_value(0)));
         let opt = map.get_left(&TestingStruct::from_value(101));
         assert_eq!(opt, Some(&"0".to_string()));
         // With collision
@@ -186,10 +183,10 @@ mod tests {
         let opt = map.swap_right(&TestingStruct::from_value(0), TestingStruct::from_value(1));
         assert_eq!(
             opt,
-            Some((
+            OptionalPair::SomeBoth(
                 TestingStruct::from_value(0),
                 OptionalPair::SomeBoth("1".to_string(), TestingStruct::from_value(1))
-            ))
+            )
         );
         let opt = map.get_left(&TestingStruct::from_value(1));
         assert_eq!(opt, Some(&"0".to_string()));
@@ -203,16 +200,13 @@ mod tests {
             &"0".to_string(),
             TestingStruct::from_value(2),
         );
-        assert_eq!(opt, None);
+        assert_eq!(opt, OptionalPair::None);
         let opt = map.swap_right_checked(
             &TestingStruct::from_value(0),
             &"0".to_string(),
             TestingStruct::from_value(101),
         );
-        assert_eq!(
-            opt,
-            Some((TestingStruct::from_value(0), OptionalPair::None))
-        );
+        assert_eq!(opt, OptionalPair::SomeLeft(TestingStruct::from_value(0)));
     }
 
     #[test]

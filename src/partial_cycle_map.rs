@@ -196,14 +196,21 @@ where
     /// If there is another item in the left set that is equal to the new left item which is mapped
     /// to another right item, that cycle is removed.
     ///
+    /// Note: This method will never return the `SomeRight` variant of `OptionalPair`.
+    ///
     /// If there is a collision, the old cycle is returned.
-    pub fn swap_left(&mut self, old: &L, new: L) -> Option<(L, OptionalPair<L, R>)> {
+    pub fn swap_left(&mut self, old: &L, new: L) -> OptionalPair<L, OptionalPair<L, R>> {
         // Check for Eq left item and remove that cycle if it exists
         let new_l_hash = make_hash::<L, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
         // Find the old left pairing
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        let l_pairing: &MappingPair<L> = self.left_set.get(old_l_hash, equivalent_key(old))?;
+        let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
+            Some(p) => p,
+            None => {
+                return OptionalPair::None;
+            }
+        };
         if let Some(hash) = l_pairing.hash {
             // Use old left pairing to find right pairing
             let r_pairing: &mut MappingPair<R> = self
@@ -232,7 +239,11 @@ where
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
         );
         // Return old left pairing
-        Some((old_left_item, eq_opt))
+        if eq_opt.is_none() {
+            OptionalPair::SomeLeft(old_left_item)
+        } else {
+            OptionalPair::SomeBoth(old_left_item, eq_opt)
+        }
     }
 
     /// Does what [`swap_left`] does, but fails to swap and returns None if the old item isn't
@@ -244,10 +255,10 @@ where
         old: &L,
         expected: &R,
         new: L,
-    ) -> Option<(L, OptionalPair<L, R>)> {
+    ) -> OptionalPair<L, OptionalPair<L, R>> {
         // Check if old and expected are mapped
         if !self.are_mapped(old, expected) {
-            return None;
+            return OptionalPair::None;
         }
         self.swap_left(old, new)
     }
@@ -264,13 +275,7 @@ where
     ) -> OptionalPair<L, OptionalPair<L, R>> {
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
         if self.left_set.get(old_l_hash, equivalent_key(old)).is_some() {
-            match self.swap_left(old, new) {
-                None => OptionalPair::None,
-                Some((l, op)) => match op {
-                    OptionalPair::None => OptionalPair::SomeLeft(l),
-                    p => OptionalPair::SomeBoth(l, p),
-                },
-            }
+            self.swap_left(old, new)
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(new, to_insert) {
@@ -297,13 +302,18 @@ where
 
     /// Swaps an item in the right set with another item, remaps the old item's associated left
     /// item, and returns the old right item
-    pub fn swap_right(&mut self, old: &R, new: R) -> Option<(R, OptionalPair<L, R>)> {
+    pub fn swap_right(&mut self, old: &R, new: R) -> OptionalPair<R, OptionalPair<L, R>> {
         // Check for Eq left item and remove that cycle if it exists
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
         let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        let r_pairing: &MappingPair<R> = self.right_set.get(old_r_hash, equivalent_key(old))?;
+        let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
+            Some(p) => p,
+            None => {
+                return OptionalPair::None;
+            }
+        };
         if let Some(hash) = r_pairing.hash {
             // Use old right pairing to find the left pairing
             let l_pairing: &mut MappingPair<L> = self
@@ -332,7 +342,11 @@ where
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
         );
         // Return old right pairing
-        Some((old_right_item, eq_opt))
+        if eq_opt.is_none() {
+            OptionalPair::SomeLeft(old_right_item)
+        } else {
+            OptionalPair::SomeBoth(old_right_item, eq_opt)
+        }
     }
 
     /// Does what [`swap_right`] does, but fails to swap if the old item isn't mapped to the given
@@ -344,10 +358,10 @@ where
         old: &R,
         expected: &L,
         new: R,
-    ) -> Option<(R, OptionalPair<L, R>)> {
+    ) -> OptionalPair<R, OptionalPair<L, R>> {
         // Check if old and expected are mapped
         if !self.are_mapped(expected, old) {
-            return None;
+            return OptionalPair::None;
         } // Things can be removed after this point
         self.swap_right(old, new)
     }
@@ -369,13 +383,7 @@ where
             .get(old_r_hash, equivalent_key(old))
             .is_some()
         {
-            match self.swap_right(old, new) {
-                None => OptionalPair::None,
-                Some((r, op)) => match op {
-                    OptionalPair::None => OptionalPair::SomeLeft(r),
-                    p => OptionalPair::SomeBoth(r, p),
-                },
-            }
+            self.swap_right(old, new)
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(to_insert, new) {

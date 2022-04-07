@@ -53,6 +53,60 @@ where
     pub fn is_some(&self) -> bool {
         !self.is_none()
     }
+
+    /// Converts the pair into a new pair. The types of the new pair need to implement a
+    /// converation `From` the old types. This consumes the old pair
+    pub fn convert<A, B>(self) -> OptionalPair<A, B>
+    where
+        A: Eq + From<L>,
+        B: Eq + From<R>,
+    {
+        self.map(|l| A::from(l), |r| B::from(r))
+    }
+
+    /// Maps both inner values of a pair, consuming this pair.
+    pub fn map<A, B, LF, RF>(self, left: LF, right: RF) -> OptionalPair<A, B>
+    where
+        A: Eq,
+        B: Eq,
+        LF: FnOnce(L) -> A,
+        RF: FnOnce(R) -> B,
+    {
+        match self {
+            Self::None => OptionalPair::None,
+            Self::SomeLeft(l) => OptionalPair::SomeLeft(left(l)),
+            Self::SomeRight(r) => OptionalPair::SomeRight(right(r)),
+            Self::SomeBoth(l, r) => OptionalPair::SomeBoth(left(l), right(r)),
+        }
+    }
+
+    /// Maps left inner value of a pair, consuming this pair.
+    pub fn map_left<A, F>(self, f: F) -> OptionalPair<A, R>
+    where
+        A: Eq,
+        F: FnOnce(L) -> A,
+    {
+        match self {
+            Self::None => OptionalPair::None,
+            Self::SomeRight(r) => OptionalPair::SomeRight(r),
+            Self::SomeLeft(l) => OptionalPair::SomeLeft(f(l)),
+            Self::SomeBoth(l, r) => OptionalPair::SomeBoth(f(l), r),
+        }
+    }
+
+    /// Maps right inner value of a pair, consuming this pair.
+    pub fn map_right<A, F>(self, f: F) -> OptionalPair<L, A>
+    where
+        A: Eq,
+        F: FnOnce(R) -> A,
+    {
+        match self {
+            Self::None => OptionalPair::None,
+            Self::SomeLeft(l) => OptionalPair::SomeLeft(l),
+            Self::SomeRight(r) => OptionalPair::SomeRight(f(r)),
+            Self::SomeBoth(l, r) => OptionalPair::SomeBoth(l, f(r)),
+        }
+    }
 }
 
 impl<L, R> fmt::Debug for OptionalPair<L, R>

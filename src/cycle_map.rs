@@ -197,6 +197,8 @@ where
     /// If there is another item in the left set that is equal to the new left item which is mapped
     /// to another right item, that cycle is removed.
     ///
+    /// Note: This method will never return the `SomeRight` variant of `OptionalPair`.
+    ///
     /// If there is a collision, the old cycle is returned.
     pub fn swap_left(&mut self, old: &L, new: L) -> OptionalPair<L, (L, R)> {
         // Check for Eq left item and remove that cycle if it exists
@@ -242,6 +244,8 @@ where
     /// Does what [`swap_left`] does, but fails to swap and returns None if the old item isn't
     /// mapped to the given right item.
     ///
+    /// Note: This method will never return the `SomeRight` variant of `OptionalPair`.
+    ///
     /// [`swap_left`]: struct.CycleMap.html#method.swap_left
     pub fn swap_left_checked(&mut self, old: &L, expected: &R, new: L) -> OptionalPair<L, (L, R)> {
         // Check if old and expected are mapped
@@ -252,7 +256,6 @@ where
     }
 
     /// Does what [`swap_left`] does, but inserts a new pair if the old left item isn't in the map.
-    /// None is returned on insert.
     ///
     /// [`swap_left`]: struct.CycleMap.html#method.swap_left
     pub fn swap_left_or_insert(
@@ -265,14 +268,9 @@ where
         if self.left_set.get(old_l_hash, equivalent_key(old)).is_some() {
             self.swap_left(old, new)
         } else {
-            // TODO: Do further verification on this. All cases _should_ be covered here
-            match self.insert(new, to_insert) {
-                InsertOptional::None => OptionalPair::None,
-                InsertOptional::SomeRight(pair) => OptionalPair::SomeRight(pair),
-                _ => {
-                    unreachable!("There isn't a left item")
-                }
-            }
+            // TODO: Do further verification on this. All cases _should_ be covered here as this
+            // insert should never return a left pair
+            self.insert(new, to_insert).map_left(|(l, _)| l)
         }
     }
 
@@ -290,6 +288,8 @@ where
 
     /// Swaps an item in the right set with another item, remaps the old item's associated left
     /// item, and returns the old right item
+    ///
+    /// Note: This method will never return the `SomeRight` variant of `OptionalPair`.
     pub fn swap_right(&mut self, old: &R, new: R) -> OptionalPair<R, (L, R)> {
         // Check for Eq left item and remove that cycle if it exists
         let new_r_hash = make_hash::<R, S>(&self.hash_builder, &new);
@@ -335,6 +335,8 @@ where
     /// Does what [`swap_right`] does, but fails to swap if the old item isn't mapped to the given
     /// left item.
     ///
+    /// Note: This method will never return the `SomeRight` variant of `OptionalPair`.
+    ///
     /// [`swap_right`]: struct.CycleMap.html#method.swap_right
     pub fn swap_right_checked(&mut self, old: &R, expected: &L, new: R) -> OptionalPair<R, (L, R)> {
         // Check if old and expected are mapped
@@ -344,8 +346,7 @@ where
         self.swap_right(old, new)
     }
 
-    /// Does what [`swap_right`] does, but inserts a new pair if the old right item isn't in the map
-    /// None is returned on insert.
+    /// Does what [`swap_right`] does, but inserts a new pair if the old right item isn't in the map.
     ///
     /// [`swap_right`]: struct.CycleMap.html#method.swap_right
     pub fn swap_right_or_insert(

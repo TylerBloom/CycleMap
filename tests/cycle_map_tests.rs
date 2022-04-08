@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use cycle_map::{CycleMap, InsertOptional, OptionalPair};
-    use std::collections::HashMap;
+    use std::collections::HashSet;
 
-    #[derive(PartialEq, Eq, Hash, Debug)]
+    use cycle_map::{CycleMap, InsertOptional, OptionalPair};
+
+    #[derive(PartialEq, Eq, Clone, Hash, Debug)]
     struct TestingStruct {
         pub(crate) value: u64,
         pub(crate) data: String,
@@ -47,6 +48,8 @@ mod tests {
     #[test]
     fn get_tests() {
         let map: CycleMap<String, TestingStruct> = construct_default_map();
+        assert!(map.contains_left(&0.to_string()));
+        assert!(map.contains_right(&TestingStruct::from_value(0)));
         let opt = map.get_left(&TestingStruct::from_value(42));
         assert!(opt.is_none());
         let opt = map.get_left(&TestingStruct::from_value(0));
@@ -225,8 +228,57 @@ mod tests {
     }
 
     #[test]
+    fn iter_tests() {
+        // Main iter
+        let map = construct_default_map();
+        let iter = map.iter();
+        println!("{iter:?}");
+        assert_eq!(iter.len(), 10);
+        assert_eq!(iter.clone().len(), 10);
+        assert_eq!(
+            iter.map(|(l, r)| (l.clone(), r.clone()))
+                .collect::<CycleMap<String, TestingStruct>>(),
+            map
+        );
+        // Left iter
+        let map = construct_default_map();
+        let iter = map.iter_left();
+        println!("{iter:?}");
+        assert_eq!(iter.len(), 10);
+        assert_eq!(iter.clone().len(), 10);
+        assert_eq!(
+            iter.cloned().collect::<HashSet<String>>(),
+            (0..10).map(|i| i.to_string()).collect::<HashSet<String>>()
+        );
+        // Right iter
+        let map = construct_default_map();
+        let iter = map.iter_right();
+        println!("{iter:?}");
+        assert_eq!(iter.len(), 10);
+        assert_eq!(iter.clone().len(), 10);
+        assert_eq!(
+            iter.cloned().collect::<HashSet<TestingStruct>>(),
+            (0..10).map(|i| TestingStruct::from_value(i)).collect::<HashSet<TestingStruct>>()
+        );
+    }
+
+    #[test]
+    fn eq_test() {
+        let map = construct_default_map();
+        assert_eq!(map.clone(), construct_default_map());
+        assert_eq!(construct_default_map(), construct_default_map());
+    }
+
+    #[test]
+    fn fmt_tests() {
+        let map = construct_default_map();
+        println!("{map:?}");
+    }
+
+    #[test]
     fn misc_tests() {
         let map = construct_default_map();
+        let _hasher = map.hasher();
         assert!(!map.are_mapped(&"0".to_string(), &TestingStruct::from_value(1)));
     }
 

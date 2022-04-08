@@ -531,48 +531,6 @@ where
     }
 }
 
-impl<L, R, S> Default for CycleMap<L, R, S>
-where
-    S: Default,
-{
-    fn default() -> Self {
-        Self::with_hasher(Default::default())
-    }
-}
-
-impl<L, R, S> fmt::Debug for CycleMap<L, R, S>
-where
-    L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
-    S: BuildHasher,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_set().entries(self.iter()).finish()
-    }
-}
-
-impl<L, R, S> PartialEq<CycleMap<L, R, S>> for CycleMap<L, R, S>
-where
-    L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
-    S: BuildHasher,
-{
-    fn eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() {
-            return false;
-        }
-        self.iter().all(|(l, r)| other.are_mapped(l, r))
-    }
-}
-
-impl<L, R, S> Eq for CycleMap<L, R, S>
-where
-    L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
-    S: BuildHasher,
-{
-}
-
 impl<L, R, S> CycleMap<L, R, S> {
     /// Creates a CycleMap that uses the given hasher
     pub const fn with_hasher(hash_builder: S) -> Self {
@@ -629,6 +587,64 @@ impl<L, R, S> CycleMap<L, R, S> {
         self.left_set.clear();
         self.right_set.clear();
     }
+}
+
+impl<L, R, S> Clone for CycleMap<L, R, S>
+where
+    L: Eq + Hash + Clone,
+    R: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            left_set: self.left_set.clone(),
+            right_set: self.right_set.clone(),
+            counter: self.counter,
+            hash_builder: self.hash_builder.clone()
+        }
+    }
+}
+
+impl<L, R, S> Default for CycleMap<L, R, S>
+where
+    S: Default,
+{
+    fn default() -> Self {
+        Self::with_hasher(Default::default())
+    }
+}
+
+impl<L, R, S> fmt::Debug for CycleMap<L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_set().entries(self.iter()).finish()
+    }
+}
+
+impl<L, R, S> PartialEq<CycleMap<L, R, S>> for CycleMap<L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        self.iter().all(|(l, r)| other.are_mapped(l, r))
+    }
+}
+
+impl<L, R, S> Eq for CycleMap<L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
 }
 
 impl<L, R, S> Extend<(L, R)> for CycleMap<L, R, S>

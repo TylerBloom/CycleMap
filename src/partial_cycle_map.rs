@@ -508,6 +508,15 @@ where
         }
     }
 
+    /// Returns an iterator over the unpaired items in the map
+    pub fn iter_unmapped(&self) -> UnmappedIter<'_, L, R, S> {
+        UnmappedIter {
+            left_iter: unsafe { self.left_set.iter() },
+            right_iter: unsafe { self.right_set.iter() },
+            map_ref: self,
+        }
+    }
+
     /// Returns an iterator over elements in the left set
     pub fn iter_left(&self) -> SingleIter<'_, L> {
         SingleIter {
@@ -523,7 +532,7 @@ where
             marker: PhantomData,
         }
     }
-    
+
     /// Drops all pairs that cause the predicate to return `false` while keeping the backing memory
     /// allocated
     pub fn retain_mapped<F>(&mut self, mut f: F)
@@ -541,6 +550,48 @@ where
         }
         for (l_hash, r_hash, id) in to_drop {
             self.remove_via_hashes_and_id(l_hash, r_hash, id);
+        }
+    }
+
+    /// Drops all unpaired items that cause the predicate to return `false` while keeping the backing memory
+    /// allocated
+    pub fn retain_unmapped<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&OptionalPair<&L, &R>) -> bool,
+    {
+        let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
+            Vec::with_capacity(self.left_set.len());
+        for op in self.iter_unmapped() {
+            if !f(&op) {
+                match op {
+                    OptionalPair::SomeLeft(left) => {
+                        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
+                        let id = self.get_left_inner_with_hash(left, l_hash).unwrap().id;
+                        to_drop.push((Some(l_hash), None, id));
+                    }
+                    OptionalPair::SomeRight(right) => {
+                        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+                        let id = self.get_right_inner_with_hash(right, r_hash).unwrap().id;
+                        to_drop.push((None, Some(r_hash), id));
+                    }
+                    _ => {
+                        unreachable!("We are only iterating over unpaired items.");
+                    }
+                }
+            }
+        }
+        for tup in to_drop {
+            match tup {
+                (Some(l), None, id) => {
+                    self.left_set.remove_entry(l, |p| p.id == id);
+                }
+                (None, Some(r), id) => {
+                    self.right_set.remove_entry(r, |p| p.id == id);
+                }
+                _ => {
+                    unreachable!("We are only iterating over unpaired items.");
+                }
+            }
         }
     }
 
@@ -622,21 +673,14 @@ where
         if self.len() != other.len() {
             return false;
         }
-        self.iter()
-            .all(|op| 
-                match op {
-                    OptionalPair::SomeLeft(l) => {
-                        other.get_right(l).is_none()
-                    },
-                    OptionalPair::SomeRight(r) => {
-                        other.get_left(r).is_none()
-                    },
-                    OptionalPair::SomeBoth(l,r) => {
-                        other.are_mapped(l, r)
-                    },
-                    _ => { unreachable!("There has to be at least one item.") }
-                }
-            )
+        self.iter().all(|op| match op {
+            OptionalPair::SomeLeft(l) => other.get_right(l).is_none(),
+            OptionalPair::SomeRight(r) => other.get_left(r).is_none(),
+            OptionalPair::SomeBoth(l, r) => other.are_mapped(l, r),
+            _ => {
+                unreachable!("There has to be at least one item.")
+            }
+        })
     }
 }
 
@@ -868,6 +912,77 @@ where
 }
 
 impl<L, R, S> FusedIterator for MappedIter<'_, L, R, S>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+    S: BuildHasher,
+{
+}
+
+/// An iterator over the entry pairs of a `PartialCycleMap`.
+pub struct UnmappedIter<'a, L, R, S> {
+    left_iter: RawIter<MappingPair<L>>,
+    right_iter: RawIter<MappingPair<R>>,
+    map_ref: &'a PartialCycleMap<L, R, S>,
+}
+
+impl<L, R, S> Clone for UnmappedIter<'_, L, R, S> {
+    fn clone(&self) -> Self {
+        Self {
+            left_iter: self.left_iter.clone(),
+            right_iter: self.right_iter.clone(),
+            map_ref: self.map_ref,
+        }
+    }
+}
+
+impl<L, R, S> fmt::Debug for UnmappedIter<'_, L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a, L, R, S> Iterator for UnmappedIter<'a, L, R, S>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+    S: BuildHasher,
+{
+    type Item = OptionalPair<&'a L, &'a R>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Ignore all unpaired items
+        match self
+            .left_iter
+            .next()
+            .filter(|p| unsafe { p.as_ref().hash.is_none() })
+        {
+            Some(l) => unsafe { Some(OptionalPair::SomeLeft(&l.as_ref().value)) },
+            None => {
+                // Ignore all right items that are paired, we've seen those already
+                match self
+                    .right_iter
+                    .next()
+                    .filter(|p| unsafe { p.as_ref().hash.is_none() })
+                {
+                    Some(r) => unsafe { Some(OptionalPair::SomeRight(&r.as_ref().value)) },
+                    None => None,
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.left_iter.size_hint()
+    }
+}
+
+impl<L, R, S> FusedIterator for UnmappedIter<'_, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,

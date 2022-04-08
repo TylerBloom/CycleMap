@@ -34,6 +34,11 @@ pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
     move |x| id == x.id && Some(hash) == x.hash
 }
 
+// To be safe, use `hash_and_id` whenever possible
+pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
+    move |x| id == x.id
+}
+
 /// Similar to [`CycleMap`] but items might be not paired.
 ///
 /// [`CycleMap`]: crate.struct.CycleMap.html
@@ -185,11 +190,14 @@ where
     /// Use [`pair_forced_remove`] if you want to remove the items that become unpaired.
     ///
     /// [`pair_forced_remove`]: struct.PartialCycleMap.html#method.pair_forced_remove
-    pub fn pair_forced(&mut self, left: &L, right: &R) -> OptionalPair<&L, &R> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
+    pub fn pair_forced(&mut self, l: &L, r: &R) -> OptionalPair<&L, &R> {
+        if self.are_mapped(l, r) {
+            return OptionalPair::None;
+        }
+        let l_hash = make_hash::<L, S>(&self.hash_builder, l);
+        let r_hash = make_hash::<R, S>(&self.hash_builder, r);
+        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
+        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => match (left.hash, right.hash) {
                 (None, None) => {
@@ -209,11 +217,7 @@ where
                         .unwrap()
                         .hash = None;
                     OptionalPair::SomeRight(
-                        &self
-                            .right_set
-                            .get(lp_hash, hash_and_id(l_hash, old_id))
-                            .unwrap()
-                            .value,
+                        &self.right_set.get(lp_hash, just_id(old_id)).unwrap().value,
                     )
                 }
                 (None, Some(rp_hash)) => {
@@ -227,11 +231,7 @@ where
                         .unwrap()
                         .hash = None;
                     OptionalPair::SomeLeft(
-                        &self
-                            .left_set
-                            .get(rp_hash, hash_and_id(r_hash, old_id))
-                            .unwrap()
-                            .value,
+                        &self.left_set.get(rp_hash, just_id(old_id)).unwrap().value,
                     )
                 }
                 (Some(lp_hash), Some(rp_hash)) => {
@@ -252,14 +252,10 @@ where
                         .unwrap()
                         .hash = None;
                     OptionalPair::SomeBoth(
-                        &self
-                            .left_set
-                            .get(rp_hash, hash_and_id(r_hash, old_r_id))
-                            .unwrap()
-                            .value,
+                        &self.left_set.get(rp_hash, just_id(old_r_id)).unwrap().value,
                         &self
                             .right_set
-                            .get(lp_hash, hash_and_id(l_hash, old_l_id))
+                            .get(lp_hash, just_id(old_l_id))
                             .unwrap()
                             .value,
                     )
@@ -276,67 +272,96 @@ where
     ///
     /// [`swap_left`]: struct.PartialCycleMap.html#method.swap_left
     /// [`swap_right`]: struct.PartialCycleMap.html#method.swap_right
-    pub fn pair_forced_remove(&mut self, left: &L, right: &R) -> OptionalPair<L, R> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
+    pub fn pair_forced_remove(&mut self, l: &L, r: &R) -> OptionalPair<L, R> {
+        if self.are_mapped(l, r) {
+            return OptionalPair::None;
+        }
+        let l_hash = make_hash::<L, S>(&self.hash_builder, l);
+        let r_hash = make_hash::<R, S>(&self.hash_builder, r);
+        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
+        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
         match (opt_left, opt_right) {
-            (Some(left), Some(right)) => match (left.hash, right.hash) {
-                (None, None) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    right.id = left.id;
-                    OptionalPair::None
+            (Some(left), Some(right)) => {
+                match (left.hash, right.hash) {
+                    (None, None) => {
+                        left.hash = Some(r_hash);
+                        right.hash = Some(l_hash);
+                        right.id = left.id;
+                        OptionalPair::None
+                    }
+                    (Some(lp_hash), None) => {
+                        left.hash = Some(r_hash);
+                        right.hash = Some(l_hash);
+                        let old_id = left.id;
+                        // Here, we give the left item the new id to avoid a collision in the right set
+                        left.id = right.id;
+                        OptionalPair::SomeRight(
+                            self.right_set
+                                .remove_entry(lp_hash, just_id(old_id))
+                                .unwrap()
+                                .extract(),
+                        )
+                    }
+                    (None, Some(rp_hash)) => {
+                        left.hash = Some(r_hash);
+                        right.hash = Some(l_hash);
+                        let old_id = right.id;
+                        // Here, we give the left item the new id to avoid a collision in the right set
+                        right.id = left.id;
+                        OptionalPair::SomeLeft(
+                            self.left_set
+                                .remove_entry(rp_hash, hash_and_id(r_hash, old_id))
+                                .unwrap()
+                                .extract(),
+                        )
+                    }
+                    (Some(lp_hash), Some(rp_hash)) => {
+                        left.hash = Some(r_hash);
+                        right.hash = Some(l_hash);
+                        let old_l_id = left.id;
+                        let old_r_id = right.id;
+                        // Here, we give the pair a new id to avoid collisions in both sets
+                        left.id = self.counter;
+                        right.id = self.counter;
+                        self.counter += 1;
+                        OptionalPair::SomeBoth(
+                            self.left_set
+                                .remove_entry(rp_hash, just_id(old_r_id))
+                                .unwrap()
+                                .extract(),
+                            self.right_set
+                                .remove_entry(lp_hash, just_id(old_l_id))
+                                .unwrap()
+                                .extract(),
+                        )
+                    }
                 }
-                (Some(lp_hash), None) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    let old_id = left.id;
-                    // Here, we give the left item the new id to avoid a collision in the right set
-                    left.id = right.id;
-                    OptionalPair::SomeRight(
-                        self.right_set
-                            .remove_entry(lp_hash, hash_and_id(l_hash, old_id))
-                            .unwrap()
-                            .extract(),
-                    )
-                }
-                (None, Some(rp_hash)) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    let old_id = left.id;
-                    // Here, we give the left item the new id to avoid a collision in the right set
-                    right.id = left.id;
-                    OptionalPair::SomeLeft(
-                        self.left_set
-                            .remove_entry(rp_hash, hash_and_id(r_hash, old_id))
-                            .unwrap()
-                            .extract(),
-                    )
-                }
-                (Some(lp_hash), Some(rp_hash)) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    let old_l_id = left.id;
-                    let old_r_id = right.id;
-                    // Here, we give the pair a new id to avoid collisions in both sets
-                    left.id = self.counter;
-                    right.id = self.counter;
-                    self.counter += 1;
-                    OptionalPair::SomeBoth(
-                        self.left_set
-                            .remove_entry(rp_hash, hash_and_id(r_hash, old_r_id))
-                            .unwrap()
-                            .extract(),
-                        self.right_set
-                            .remove_entry(lp_hash, hash_and_id(l_hash, old_l_id))
-                            .unwrap()
-                            .extract(),
-                    )
-                }
-            },
+            }
             _ => OptionalPair::None,
+        }
+    }
+
+    /// Determines if an item in the left set is paired.
+    ///
+    /// Returns false if the item isn't found or is unpaired. Returns true otherwise.
+    pub fn is_left_paired(&self, left: &L) -> bool {
+        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
+        let opt_left = self.left_set.get(l_hash, equivalent_key(left));
+        match opt_left {
+            Some(l) => l.hash.is_some(),
+            None => false,
+        }
+    }
+
+    /// Determines if an item in the right set is paired.
+    ///
+    /// Returns false if the item isn't found or is unpaired. Returns true otherwise.
+    pub fn is_right_paired(&self, right: &R) -> bool {
+        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
+        match opt_right {
+            Some(r) => r.hash.is_some(),
+            None => false,
         }
     }
 
@@ -873,6 +898,22 @@ where
     }
 }
 
+impl<L, R, S> Clone for PartialCycleMap<L, R, S>
+where
+    L: Eq + Hash + Clone,
+    R: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            left_set: self.left_set.clone(),
+            right_set: self.right_set.clone(),
+            counter: self.counter,
+            hash_builder: self.hash_builder.clone(),
+        }
+    }
+}
+
 impl<L, R, S> Default for PartialCycleMap<L, R, S>
 where
     S: Default,
@@ -900,7 +941,7 @@ where
     S: BuildHasher,
 {
     fn eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() {
+        if self.len_left() != other.len_left() && self.len_right() != other.len_right() {
             return false;
         }
         self.iter().all(|op| match op {
@@ -949,13 +990,13 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
     }
 
     /// Returns the capacity of the left set
-    pub fn left_capacity(&self) -> usize {
+    pub fn capacity_left(&self) -> usize {
         // The size of the sets is always equal
         self.left_set.capacity()
     }
 
     /// Returns the capacity of the right set
-    pub fn right_capacity(&self) -> usize {
+    pub fn capacity_right(&self) -> usize {
         // The size of the sets is always equal
         self.right_set.capacity()
     }
@@ -969,14 +1010,20 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
     */
 
     /// Returns the len of the inner sets (same between sets)
-    pub fn len(&self) -> usize {
+    pub fn len_left(&self) -> usize {
         // The size of the sets is always equal
         self.left_set.len()
     }
 
+    /// Returns the len of the inner sets (same between sets)
+    pub fn len_right(&self) -> usize {
+        // The size of the sets is always equal
+        self.right_set.len()
+    }
+
     /// Returns true if no items are in the map and false otherwise
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len_left() + self.len_right() == 0
     }
 
     /// Removes all pairs for the set while keeping the backing memory allocated
@@ -1000,12 +1047,49 @@ where
     }
 }
 
+impl<L, R, S> Extend<OptionalPair<L, R>> for PartialCycleMap<L, R, S>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+    S: BuildHasher,
+{
+    #[inline]
+    fn extend<T: IntoIterator<Item = OptionalPair<L, R>>>(&mut self, iter: T) {
+        for op in iter {
+            match op {
+                OptionalPair::None => {}
+                OptionalPair::SomeLeft(l) => {
+                    self.insert_left(l);
+                }
+                OptionalPair::SomeRight(r) => {
+                    self.insert_right(r);
+                }
+                OptionalPair::SomeBoth(l, r) => {
+                    self.insert(l, r);
+                }
+            }
+        }
+    }
+}
+
 impl<L, R> FromIterator<(L, R)> for PartialCycleMap<L, R>
 where
     L: Hash + Eq,
     R: Hash + Eq,
 {
     fn from_iter<T: IntoIterator<Item = (L, R)>>(iter: T) -> Self {
+        let mut digest = PartialCycleMap::default();
+        digest.extend(iter);
+        digest
+    }
+}
+
+impl<L, R> FromIterator<OptionalPair<L, R>> for PartialCycleMap<L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+    fn from_iter<T: IntoIterator<Item = OptionalPair<L, R>>>(iter: T) -> Self {
         let mut digest = PartialCycleMap::default();
         digest.extend(iter);
         digest
@@ -1129,21 +1213,7 @@ where
                 let right = self.map_ref.get_right(left).unwrap();
                 Some((left, right))
             },
-            None => {
-                // Ignore all right items that are paired, we've seen those already
-                match self
-                    .right_iter
-                    .next()
-                    .filter(|p| unsafe { p.as_ref().hash.is_none() })
-                {
-                    Some(r) => unsafe {
-                        let right = &r.as_ref().value;
-                        let left = self.map_ref.get_left(right).unwrap();
-                        Some((left, right))
-                    },
-                    None => None,
-                }
-            }
+            None => None,
         }
     }
 
@@ -1376,7 +1446,8 @@ mod tests {
     #[test]
     fn default_construction_test() {
         let map = construct_default_map();
-        assert_eq!(map.len(), 100);
+        assert_eq!(map.len_left(), 100);
+        assert_eq!(map.len_right(), 100);
     }
 
     /* Might be needed in the future

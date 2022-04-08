@@ -109,6 +109,22 @@ where
     }
 }
 
+impl<L, R> OptionalPair<&L, &R>
+where
+    L: Eq + Clone,
+    R: Eq + Clone,
+{
+    pub fn cloned(&self) -> OptionalPair<L, R>
+    {
+        match self {
+            Self::None => OptionalPair::None,
+            Self::SomeLeft(l) => OptionalPair::SomeLeft((*l).clone()),
+            Self::SomeRight(r) => OptionalPair::SomeRight((*r).clone()),
+            Self::SomeBoth(l, r) => OptionalPair::SomeBoth((*l).clone(), (*r).clone()),
+        }
+    }
+}
+
 impl<L, R> Clone for OptionalPair<L, R>
 where
     L: Eq + Clone,

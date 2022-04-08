@@ -32,14 +32,17 @@ mod tests {
     fn construction_test() {
         let map: PartialCycleMap<String, TestingStruct> = PartialCycleMap::new();
         assert_eq!(map.len(), 0);
-        assert_eq!(map.capacity(), 0);
+        assert_eq!(map.left_capacity(), 0);
+        assert_eq!(map.right_capacity(), 0);
         let mut map = construct_default_map();
         assert_eq!(map.len(), 10);
-        let cap = map.capacity();
+        let l_cap = map.left_capacity();
+        let r_cap = map.right_capacity();
         map.clear();
         assert!(map.is_empty());
         assert_eq!(map.len(), 0);
-        assert_eq!(map.capacity(), cap);
+        assert_eq!(map.left_capacity(), l_cap);
+        assert_eq!(map.right_capacity(), r_cap);
     }
 
     #[test]
@@ -50,7 +53,7 @@ mod tests {
             assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
         }
         assert_eq!(map.len(), 100);
-        for (val, s) in map.iter() {
+        for (val, s) in map.iter_mapped() {
             assert_eq!(val.to_string(), *s);
             assert_eq!(str::parse::<u64>(s).expect("Unreachable"), *val);
             println!("{val}, {s}");
@@ -235,9 +238,9 @@ mod tests {
             assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
         }
         assert_eq!(map.len(), 100);
-        map.retain(|x, _| x % 2 == 0);
+        map.retain_mapped(|x, _| x % 2 == 0);
         assert_eq!(map.len(), 50);
-        for (val, s) in map.iter() {
+        for (val, s) in map.iter_mapped() {
             assert_eq!(val % 2, 0);
             println!("{val}, {s}");
         }

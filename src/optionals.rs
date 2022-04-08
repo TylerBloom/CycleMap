@@ -162,6 +162,21 @@ where
     }
 }
 
+impl<L, R> From<OptionalPair<L, R>> for (Option<L>, Option<R>)
+where
+    L: Eq,
+    R: Eq,
+{
+    fn from(input_pair: OptionalPair<L, R>) -> Self {
+        match input_pair {
+            OptionalPair::None => (None, None),
+            OptionalPair::SomeLeft(item) => (Some(item), None),
+            OptionalPair::SomeRight(item) => (None, Some(item)),
+            OptionalPair::SomeBoth(item_1, item_2) => (Some(item_1), Some(item_2)),
+        }
+    }
+}
+
 impl<L, R> From<OptionalPair<L, R>> for Option<(Option<L>, Option<R>)>
 where
     L: Eq,

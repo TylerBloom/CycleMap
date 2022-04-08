@@ -456,13 +456,11 @@ where
         self.left_set.get(hash, equivalent_key(item))
     }
 
-    /* Might be used in the future
     #[inline]
     fn get_right_inner(&self, item: &R) -> Option<&MappingPair<R>> {
         let hash = make_hash::<R, S>(&self.hash_builder, item);
         self.right_set.get(hash, equivalent_key(item))
     }
-    */
 
     #[inline]
     fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&MappingPair<R>> {
@@ -493,10 +491,19 @@ where
     }
     */
 
-    /// Returns an iterator over the pairs in the map
+    /// Returns an iterator over the items in the map
     pub fn iter(&self) -> Iter<'_, L, R, S> {
         Iter {
             left_iter: unsafe { self.left_set.iter() },
+            map_ref: self,
+        }
+    }
+
+    /// Returns an iterator over the paired items in the map
+    pub fn iter_mapped(&self) -> MappedIter<'_, L, R, S> {
+        MappedIter {
+            left_iter: unsafe { self.left_set.iter() },
+            right_iter: unsafe { self.right_set.iter() },
             map_ref: self,
         }
     }
@@ -516,15 +523,15 @@ where
             marker: PhantomData,
         }
     }
-
+    
     /// Drops all pairs that cause the predicate to return `false` while keeping the backing memory
     /// allocated
-    pub fn retain<F>(&mut self, mut f: F)
+    pub fn retain_mapped<F>(&mut self, mut f: F)
     where
         F: FnMut(&L, &R) -> bool,
     {
         let mut to_drop: Vec<(u64, u64, u64)> = Vec::with_capacity(self.left_set.len());
-        for (left, right) in self.iter() {
+        for (left, right) in self.iter_mapped() {
             if !f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                 let r_hash = make_hash::<R, S>(&self.hash_builder, right);
@@ -534,6 +541,53 @@ where
         }
         for (l_hash, r_hash, id) in to_drop {
             self.remove_via_hashes_and_id(l_hash, r_hash, id);
+        }
+    }
+
+    /// Drops all items that cause the predicate to return `false` while keeping the backing memory
+    /// allocated
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&OptionalPair<&L, &R>) -> bool,
+    {
+        let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
+            Vec::with_capacity(self.left_set.len());
+        for op in self.iter() {
+            if !f(&op) {
+                let (left, right): (Option<&L>, Option<&R>) = op.into();
+                let l_hash: Option<u64> = if left.is_some() {
+                    Some(make_hash::<L, S>(&self.hash_builder, left.unwrap()))
+                } else {
+                    None
+                };
+                let r_hash: Option<u64> = if right.is_some() {
+                    Some(make_hash::<R, S>(&self.hash_builder, right.unwrap()))
+                } else {
+                    None
+                };
+                let id = if left.is_some() {
+                    self.get_left_inner(left.unwrap()).unwrap().id
+                } else {
+                    self.get_right_inner(right.unwrap()).unwrap().id
+                };
+                to_drop.push((l_hash, r_hash, id));
+            }
+        }
+        for tup in to_drop {
+            match tup {
+                (Some(l), Some(r), id) => {
+                    self.remove_via_hashes_and_id(l, r, id);
+                }
+                (Some(l), None, id) => {
+                    self.left_set.remove_entry(l, |p| p.id == id);
+                }
+                (None, Some(r), id) => {
+                    self.right_set.remove_entry(r, |p| p.id == id);
+                }
+                _ => {
+                    unreachable!("There is either some left or some right hash.");
+                }
+            }
         }
     }
 }
@@ -568,7 +622,21 @@ where
         if self.len() != other.len() {
             return false;
         }
-        self.iter().all(|(l, r)| other.are_mapped(l, r))
+        self.iter()
+            .all(|op| 
+                match op {
+                    OptionalPair::SomeLeft(l) => {
+                        other.get_right(l).is_none()
+                    },
+                    OptionalPair::SomeRight(r) => {
+                        other.get_left(r).is_none()
+                    },
+                    OptionalPair::SomeBoth(l,r) => {
+                        other.are_mapped(l, r)
+                    },
+                    _ => { unreachable!("There has to be at least one item.") }
+                }
+            )
     }
 }
 
@@ -606,10 +674,16 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
         &self.hash_builder
     }
 
-    /// Returns the capacity of the inner sets (both sets have the same capacity)
-    pub fn capacity(&self) -> usize {
+    /// Returns the capacity of the left set
+    pub fn left_capacity(&self) -> usize {
         // The size of the sets is always equal
         self.left_set.capacity()
+    }
+
+    /// Returns the capacity of the right set
+    pub fn right_capacity(&self) -> usize {
+        // The size of the sets is always equal
+        self.right_set.capacity()
     }
 
     /* Might be used in the future
@@ -664,7 +738,7 @@ where
     }
 }
 
-/// An iterator over the entry pairs of a `PartialCycleMap`.
+/// An iterator over the entry items of a `PartialCycleMap`.
 pub struct Iter<'a, L, R, S> {
     left_iter: RawIter<MappingPair<L>>,
     map_ref: &'a PartialCycleMap<L, R, S>,
@@ -696,31 +770,21 @@ where
     R: Hash + Eq,
     S: BuildHasher,
 {
-    type Item = (&'a L, &'a R);
+    type Item = OptionalPair<&'a L, &'a R>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.left_iter.next() {
             Some(l) => unsafe {
                 let left = &l.as_ref().value;
-                let right = self.map_ref.get_right(left).unwrap();
-                Some((left, right))
+                let right = self.map_ref.get_right(left);
+                Some(OptionalPair::from((Some(left), right)))
             },
             None => None,
         }
     }
+
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.left_iter.size_hint()
-    }
-}
-
-impl<L, R, S> ExactSizeIterator for Iter<'_, L, R, S>
-where
-    L: Hash + Eq,
-    R: Hash + Eq,
-    S: BuildHasher,
-{
-    fn len(&self) -> usize {
-        self.left_iter.len()
     }
 }
 
@@ -732,7 +796,86 @@ where
 {
 }
 
-/// An iterator over the left elements of a `PartialCycleMap`.
+/// An iterator over the entry pairs of a `PartialCycleMap`.
+pub struct MappedIter<'a, L, R, S> {
+    left_iter: RawIter<MappingPair<L>>,
+    right_iter: RawIter<MappingPair<R>>,
+    map_ref: &'a PartialCycleMap<L, R, S>,
+}
+
+impl<L, R, S> Clone for MappedIter<'_, L, R, S> {
+    fn clone(&self) -> Self {
+        Self {
+            left_iter: self.left_iter.clone(),
+            right_iter: self.right_iter.clone(),
+            map_ref: self.map_ref,
+        }
+    }
+}
+
+impl<L, R, S> fmt::Debug for MappedIter<'_, L, R, S>
+where
+    L: Hash + Eq + fmt::Debug,
+    R: Hash + Eq + fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a, L, R, S> Iterator for MappedIter<'a, L, R, S>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+    S: BuildHasher,
+{
+    type Item = (&'a L, &'a R);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Ignore all unpaired items
+        match self
+            .left_iter
+            .next()
+            .filter(|p| unsafe { p.as_ref().hash.is_some() })
+        {
+            Some(l) => unsafe {
+                let left = &l.as_ref().value;
+                let right = self.map_ref.get_right(left).unwrap();
+                Some((left, right))
+            },
+            None => {
+                // Ignore all right items that are paired, we've seen those already
+                match self
+                    .right_iter
+                    .next()
+                    .filter(|p| unsafe { p.as_ref().hash.is_none() })
+                {
+                    Some(r) => unsafe {
+                        let right = &r.as_ref().value;
+                        let left = self.map_ref.get_left(right).unwrap();
+                        Some((left, right))
+                    },
+                    None => None,
+                }
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.left_iter.size_hint()
+    }
+}
+
+impl<L, R, S> FusedIterator for MappedIter<'_, L, R, S>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+    S: BuildHasher,
+{
+}
+
+/// An iterator over the elements of an inner set of a `PartialCycleMap`.
 pub struct SingleIter<'a, T> {
     iter: RawIter<MappingPair<T>>,
     marker: PhantomData<&'a T>,

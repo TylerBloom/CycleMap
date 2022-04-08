@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use std::hash::{Hash, Hasher};
-
     use cycle_map::{OptionalPair, PartialCycleMap};
 
     #[derive(PartialEq, Eq, Hash, Debug)]
@@ -14,18 +12,6 @@ mod tests {
         (0..10)
             .map(|i| (i.to_string(), TestingStruct::from_value(i)))
             .collect()
-    }
-
-    #[derive(PartialEq, Eq, Debug)]
-    struct BumpingStruct {
-        hashable: String,
-        value: String,
-    }
-
-    impl Hash for BumpingStruct {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            self.hashable.hash(state)
-        }
     }
 
     #[test]

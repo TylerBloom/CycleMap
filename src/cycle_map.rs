@@ -146,6 +146,22 @@ where
         }
     }
 
+    /// Determines if the mapped contains the item in the left set
+    ///
+    /// Returns `true` if the item is found and `false` otherwise.
+    pub fn contains_left(&self, left: &L) -> bool {
+        let hash = make_hash::<L, S>(&self.hash_builder, left);
+        self.left_set.get(hash, equivalent_key(left)).is_some()
+    }
+
+    /// Determines if the mapped contains the item in the right set
+    ///
+    /// Returns `true` if the item is found and `false` otherwise.
+    pub fn contains_right(&self, right: &R) -> bool {
+        let hash = make_hash::<R, S>(&self.hash_builder, right);
+        self.right_set.get(hash, equivalent_key(right)).is_some()
+    }
+
     /// Removes a pair of items only if they are mapped together and returns the pair
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
         if self.are_mapped(left, right) {

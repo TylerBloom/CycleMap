@@ -73,26 +73,26 @@ mod tests {
         // None tests
         let no: OptionalPair<u64, u64> = OptionalPair::None;
         let no_opt: Option<(Option<u64>, Option<u64>)> = no.clone().into();
-        assert_eq!( no, OptionalPair::from(no_opt) );
+        assert_eq!(no, OptionalPair::from(no_opt));
         let no_tup: (Option<u64>, Option<u64>) = no.clone().into();
-        assert_eq!( no, OptionalPair::from(no_tup) );
+        assert_eq!(no, OptionalPair::from(no_tup));
         // SomeLeft tests
         let sl: OptionalPair<u64, u64> = OptionalPair::SomeLeft(42);
         let sl_opt: Option<(Option<u64>, Option<u64>)> = sl.clone().into();
-        assert_eq!( sl, OptionalPair::from(sl_opt) );
+        assert_eq!(sl, OptionalPair::from(sl_opt));
         let sl_tup: (Option<u64>, Option<u64>) = sl.clone().into();
-        assert_eq!( sl, OptionalPair::from(sl_tup) );
+        assert_eq!(sl, OptionalPair::from(sl_tup));
         // SomeRight tests
         let sr: OptionalPair<u64, u64> = OptionalPair::SomeRight(84);
         let sr_opt: Option<(Option<u64>, Option<u64>)> = sr.clone().into();
-        assert_eq!( sr, OptionalPair::from(sr_opt) );
+        assert_eq!(sr, OptionalPair::from(sr_opt));
         let sr_tup: (Option<u64>, Option<u64>) = sr.clone().into();
-        assert_eq!( sr, OptionalPair::from(sr_tup) );
+        assert_eq!(sr, OptionalPair::from(sr_tup));
         // SomeBoth tests
         let sb: OptionalPair<u64, u64> = OptionalPair::SomeBoth(42, 84);
         let sb_opt: Option<(Option<u64>, Option<u64>)> = sb.clone().into();
-        assert_eq!( sb, OptionalPair::from(sb_opt) );
+        assert_eq!(sb, OptionalPair::from(sb_opt));
         let sb_tup: (Option<u64>, Option<u64>) = sb.clone().into();
-        assert_eq!( sb, OptionalPair::from(sb_tup) );
+        assert_eq!(sb, OptionalPair::from(sb_tup));
     }
 }

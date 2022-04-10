@@ -34,26 +34,15 @@ pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
     move |x| id == x.id && hash == x.hash
 }
 
-/* Might be used in the future
-pub(crate) fn does_map<'a, P, Q>(
-    value: &'a P,
-    map_ref: &'a RawTable<MappingPair<P>>,
-) -> impl Fn(&MappingPair<Q>) -> bool + 'a
-where
-    P: Hash + PartialEq + Eq,
-    Q: Hash + PartialEq + Eq + ?Sized,
-{
-    move |pair| map_ref.get(pair.hash, equivalent_key(value)).is_some()
-}
-*/
-
-/// A hash map that supports bidirection searches.
+/// A strict one-to-one map.
 ///
-/// CycleMap bijectively maps two sets of elements, i.e. every element always
-/// has a "companion". It does this while maintaining the same complexitity for "gets"
-/// as a traditional [`HashMap`] and while only keeping a single copy of each element.
+/// CycleMap bijectively maps two sets, i.e. every item always in a set
+/// has a "companion" item in the other set.
+/// It does this while maintaining the same complexitity for lookups
+/// as a traditional hash map and while only keeping a single copy of each element.
 ///
-/// It is implemented using two sets, a "left" and "right" set. On insert, the given pair
+/// A CycleMap contains a "left" and "right" set.
+/// On insert, the given pair
 /// of items is split. The left item is stored in the left set with the hash of the right item,
 /// likewise for the right item. As such, both the left and right types need to implement [`Eq`]
 /// and [`Hash`], and as with other hashed collections, it is a logic error for an item to be
@@ -63,8 +52,6 @@ where
 /// faster but is not with a cost. When inserting a new pair of elements, there is potentail for
 /// collision. This collision should be excendingly rare and can only happen upon inserting new
 /// elements. You can read more about what causes collisions [here]("").
-///
-/// [`HashMap`]: https://doc.rust-lang.org/std/collections/struct.HashMap.html
 pub struct CycleMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
     pub(crate) counter: u64,

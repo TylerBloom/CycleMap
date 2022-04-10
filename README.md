@@ -5,42 +5,76 @@
 ![Maintenance](https://img.shields.io/badge/Maintenance-Actively%20Developed-brightgreen.svg)
 
 ## About
-NOTE: This project is still very much in the works.
+NOTE: This project is still very much in the works. If you'd like to see
+a more detailed status of this repo, see the "Progress" section at the
+end of this Readme.
 
 
-CycleMap provides several map types that can be used to associate
-items together while maintaining lookup speeds on par with the
-standard [HashMap](https://crates.io/crates/hashbrown).
+CycleMap provides several "double-sided" hash maps that associate items
+between two sets. It does this without keep duplicate data and while
+maintaining lookup speeds on par with the standard
+[HashMap](https://crates.io/crates/hashbrown).
 
-There are many ways that you might want to map two sets of items,
+There are many ways that you might want to map items between sets.
 CycleMap supports four.
- - There are bijective maps, every item is always paired with exact one
- 	 other
- - Partial bijective maps, every item is paired with at most one other
- 	 item
- - Injective maps, every item in set A is mapped to an item in set B but
- 	 not uniquely, and every element in B has at least one item mapped to
- 	 it
- - Partial injective maps, every item in set A is mapped to at most one
- 	 item in set B, and items in set B don't have to have an item paired
- 	 with it
+ - Bijective maps: every item in both sets is paired, and paired with
+ 	 exactly one other item
+ - Partial bijective maps: items in either set don't have to be paired,
+ 	 but any paired item is paired with exactly one other item
+ - Injective maps: every item in both sets is paired, but items in the
+ 	 right set can be paired with multiple items from the left set
+ - Partial injective maps: items in either set don't have to be paired,
+ 	 but items in the right set can be paired with multiple items from the
+ 	 left set
 
 ## How it Works
-There is one core algorithm that underlies all of these maps. Each map
-contains two sets, a left set and a right set. When two items are
-paired, they form a cycle. The hash of each item is associated with its
-counterpart. This means that a cycle can be found (uniquely) using
-either item or the pair of their hashes at speeds comparable to a
-HashMap.
+Each map contains two sets, a left set and a right set. When two items
+are paired, they form a cycle. That is, given an item from either set,
+it can be used to unique lookup the item(s) it is paired with. This is
+the core algorithm that underlies all cycle maps. 
 
-This leads to the core invariant of the cycle algorithm: If two items
-form a cycle, then the pair of their hashes must be unique. This
-invariant is enforced during inserts and swaps (i.e. then items are
-added).
+Instead of holding self-referential pointers, all cycle maps pair an
+item with the hash of its partner item (and an id). This prevents
+possible unforeseen memory bugs and makes map resizing faster since an
+item doesn't need to "know" *where* its partner is but rather *how* to
+get there.
 
-Of note, it is possible to have two items with identical hashes in a set
-so long as the items are mapped to items that don't have the same hash.
-Also of note, if you assume that an item's hash is "random" with respect
-to the other elements in the sets, then it is extremely unlikely for
-this kind of collision to occur.
+## Why use 
+Cycle maps aren't meant to replace the standard hashmap (which they are
+build on). Rather, they provide a clean solution to fast bidirection
+data lookups.
+
+If you find yourself creating workarounds to these sorts of problems,
+give a cycle map a try.
+
+## Contribution
+If you want to contribute to or improve upon this library, please do so.
+Fork this project or submit an issue or a pull request for a
+feature/fix/change/etc. All that I ask is for derived/iterative
+libraries to be open and free to use and ideally with the same license
+(LGPL v3). Any other application or library that uses this library can
+use any license.
+
+## Progress
+CycleMap will be published to `crate.io` once all the aforementioned
+maps are completed and mostly stabalized. Until then, I will consider
+the library to be `pre-0.1` and with generally unstable APIs. Parts of
+the library up until then will be in a usable state. If you want to use
+them before `v0.1`, I **highly** suggest that you track which commit you
+are using to avoid commit-to-commit breaking changes.
+
+Below are the current states of all the map:
+	- [x] `CycleMap`: This is the standard bijective map. It is mostly
+		ready for public use, but work on the remaining maps might cause
+		some changes.
+	- [x] `PartialCycleMap`: This is the partially bijective map. It too is
+		mostly ready for public use, but work on the remaining maps might
+		cause some changes.
+	- [ ] `MultiCycleMap`: This is the injective map. Work on this map has
+		yet to start.
+	- [ ] `PartialMultiCycleMap`: This is the partially injective map.
+		Work on this map has yet to start.
+	- [ ] `Optionals`: For egonomics, the cycle maps uses their own
+		variant of the rust `Option`. Currently, this is just the
+		`OptionalPair`, but will like expand will its functionalities.
 

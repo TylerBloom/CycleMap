@@ -114,6 +114,8 @@ where
     L: Eq + Clone,
     R: Eq + Clone,
 {
+    /// Takes an `OptionalPair` that contains references to clonable values and returns an
+    /// `OptionalPair` of clones of those values.
     pub fn cloned(&self) -> OptionalPair<L, R>
     {
         match self {

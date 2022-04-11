@@ -12,6 +12,7 @@ use hashbrown::{
 };
 
 use crate::optionals::*;
+use OptionalPair::*;
 use crate::utils::*;
 
 // Contains a value and the hash of the item that the value maps to.
@@ -243,7 +244,7 @@ where
         let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
             Some(p) => p,
             None => {
-                return OptionalPair::None;
+                return Neither;
             }
         };
         // Use old left pairing to find right pairing
@@ -284,7 +285,7 @@ where
     pub fn swap_left_checked(&mut self, old: &L, expected: &R, new: L) -> OptionalPair<L, (L, R)> {
         // Check if old and expected are mapped
         if !self.are_mapped(old, expected) {
-            return OptionalPair::None;
+            return Neither;
         }
         self.swap_left(old, new)
     }
@@ -333,7 +334,7 @@ where
         let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
             Some(p) => p,
             None => {
-                return OptionalPair::None;
+                return Neither;
             }
         };
         // Use old right pairing to find the left pairing
@@ -375,7 +376,7 @@ where
     pub fn swap_right_checked(&mut self, old: &R, expected: &L, new: R) -> OptionalPair<R, (L, R)> {
         // Check if old and expected are mapped
         if !self.are_mapped(expected, old) {
-            return OptionalPair::None;
+            return Neither;
         } // Things can be removed after this point
         self.swap_right(old, new)
     }
@@ -400,8 +401,8 @@ where
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(to_insert, new) {
-                InsertOptional::None => OptionalPair::None,
-                InsertOptional::SomeRight(pair) => OptionalPair::SomeRight(pair),
+                InsertOptional::Neither => Neither,
+                InsertOptional::SomeRight(pair) => SomeRight(pair),
                 _ => {
                     unreachable!("There isn't a left item")
                 }

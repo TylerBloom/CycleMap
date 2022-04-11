@@ -29,6 +29,11 @@ pub mod partial_cycle_map;
 /// A weak one-to-one map
 pub use crate::partial_cycle_map::PartialCycleMap;
 
+/// A strick many-to-one map
+pub mod multi_cycle_map;
+/// A strick many-to-one map
+pub use crate::multi_cycle_map::MultiCycleMap;
+
 /// Enums similar to Option
 pub mod optionals;
 pub use crate::optionals::*;

@@ -3,6 +3,7 @@ mod tests {
     use std::collections::HashSet;
 
     use cycle_map::{CycleMap, InsertOptional, OptionalPair};
+    use OptionalPair::*;
 
     #[derive(PartialEq, Eq, Clone, Hash, Debug)]
     struct TestingStruct {
@@ -35,7 +36,7 @@ mod tests {
         let mut map: CycleMap<u64, String> = CycleMap::with_capacity(100);
         for i in 0..100 {
             let opt = map.insert(i, i.to_string());
-            assert_eq!(opt, InsertOptional::None);
+            assert_eq!(opt, InsertOptional::Neither);
         }
         assert_eq!(map.len(), 100);
         for (val, s) in map.iter() {
@@ -91,7 +92,7 @@ mod tests {
         // No collision
         let mut map = construct_default_map();
         let opt = map.swap_left(&"0".to_string(), "101".to_string());
-        assert_eq!(opt, OptionalPair::SomeLeft("0".to_string()));
+        assert_eq!(opt, SomeLeft("0".to_string()));
         let opt = map.get_right(&"101".to_string());
         assert_eq!(opt, Some(&TestingStruct::from_value(0)));
         // With collision
@@ -99,7 +100,7 @@ mod tests {
         let opt = map.swap_left(&"0".to_string(), "1".to_string());
         assert_eq!(
             opt,
-            OptionalPair::SomeBoth(
+            SomeBoth(
                 "0".to_string(),
                 ("1".to_string(), TestingStruct::from_value(1))
             )
@@ -116,13 +117,13 @@ mod tests {
             &TestingStruct::from_value(1),
             "2".to_string(),
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, Neither);
         let opt = map.swap_left_checked(
             &"0".to_string(),
             &TestingStruct::from_value(0),
             "101".to_string(),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft("0".to_string()));
+        assert_eq!(opt, SomeLeft("0".to_string()));
     }
 
     #[test]
@@ -133,7 +134,7 @@ mod tests {
             "101".to_string(),
             TestingStruct::from_value(0),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft("0".to_string()));
+        assert_eq!(opt, SomeLeft("0".to_string()));
         // No collision
         let mut map = construct_default_map();
         let opt = map.swap_left_or_insert(
@@ -141,7 +142,7 @@ mod tests {
             "102".to_string(),
             TestingStruct::from_value(102),
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, Neither);
     }
 
     #[test]
@@ -159,7 +160,7 @@ mod tests {
             &TestingStruct::from_value(0),
             TestingStruct::from_value(101),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft(TestingStruct::from_value(0)));
+        assert_eq!(opt, SomeLeft(TestingStruct::from_value(0)));
         let opt = map.get_left(&TestingStruct::from_value(101));
         assert_eq!(opt, Some(&"0".to_string()));
         // With collision
@@ -167,7 +168,7 @@ mod tests {
         let opt = map.swap_right(&TestingStruct::from_value(0), TestingStruct::from_value(1));
         assert_eq!(
             opt,
-            OptionalPair::SomeBoth(
+            SomeBoth(
                 TestingStruct::from_value(0),
                 ("1".to_string(), TestingStruct::from_value(1))
             )
@@ -184,13 +185,13 @@ mod tests {
             &"0".to_string(),
             TestingStruct::from_value(2),
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, Neither);
         let opt = map.swap_right_checked(
             &TestingStruct::from_value(0),
             &"0".to_string(),
             TestingStruct::from_value(101),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft(TestingStruct::from_value(0)));
+        assert_eq!(opt, SomeLeft(TestingStruct::from_value(0)));
     }
 
     #[test]
@@ -201,14 +202,14 @@ mod tests {
             TestingStruct::from_value(101),
             "0".to_string(),
         );
-        assert_eq!(opt, OptionalPair::SomeLeft(TestingStruct::from_value(0)));
+        assert_eq!(opt, SomeLeft(TestingStruct::from_value(0)));
         let mut map = construct_default_map();
         let opt = map.swap_right_or_insert(
             &TestingStruct::from_value(101),
             TestingStruct::from_value(102),
             "102".to_string(),
         );
-        assert_eq!(opt, OptionalPair::None);
+        assert_eq!(opt, Neither);
     }
 
     #[test]
@@ -216,7 +217,7 @@ mod tests {
         let mut map: CycleMap<u64, String> = CycleMap::with_capacity(100);
         for i in 0..100 {
             let opt = map.insert(i, i.to_string());
-            assert_eq!(opt, InsertOptional::None);
+            assert_eq!(opt, InsertOptional::Neither);
         }
         assert_eq!(map.len(), 100);
         map.retain(|x, _| x % 2 == 0);

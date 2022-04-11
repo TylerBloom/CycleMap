@@ -12,6 +12,7 @@ use hashbrown::{
 };
 
 use crate::optionals::*;
+use OptionalPair::*;
 use crate::utils::*;
 
 // Contains a value and the hash of the item that the value maps to.
@@ -192,7 +193,7 @@ where
     /// [`pair_forced_remove`]: struct.PartialCycleMap.html#method.pair_forced_remove
     pub fn pair_forced(&mut self, l: &L, r: &R) -> OptionalPair<&L, &R> {
         if self.are_mapped(l, r) {
-            return OptionalPair::None;
+            return Neither;
         }
         let l_hash = make_hash::<L, S>(&self.hash_builder, l);
         let r_hash = make_hash::<R, S>(&self.hash_builder, r);
@@ -204,7 +205,7 @@ where
                     left.hash = Some(r_hash);
                     right.hash = Some(l_hash);
                     right.id = left.id;
-                    OptionalPair::None
+                    Neither
                 }
                 (Some(lp_hash), None) => {
                     left.hash = Some(r_hash);
@@ -216,7 +217,7 @@ where
                         .get_mut(lp_hash, hash_and_id(l_hash, old_id))
                         .unwrap()
                         .hash = None;
-                    OptionalPair::SomeRight(
+                    SomeRight(
                         &self.right_set.get(lp_hash, just_id(old_id)).unwrap().value,
                     )
                 }
@@ -230,7 +231,7 @@ where
                         .get_mut(rp_hash, hash_and_id(r_hash, old_id))
                         .unwrap()
                         .hash = None;
-                    OptionalPair::SomeLeft(
+                    SomeLeft(
                         &self.left_set.get(rp_hash, just_id(old_id)).unwrap().value,
                     )
                 }
@@ -251,7 +252,7 @@ where
                         .get_mut(lp_hash, hash_and_id(l_hash, old_l_id))
                         .unwrap()
                         .hash = None;
-                    OptionalPair::SomeBoth(
+                    SomeBoth(
                         &self.left_set.get(rp_hash, just_id(old_r_id)).unwrap().value,
                         &self
                             .right_set
@@ -261,7 +262,7 @@ where
                     )
                 }
             },
-            _ => OptionalPair::None,
+            _ => Neither,
         }
     }
 
@@ -274,7 +275,7 @@ where
     /// [`swap_right`]: struct.PartialCycleMap.html#method.swap_right
     pub fn pair_forced_remove(&mut self, l: &L, r: &R) -> OptionalPair<L, R> {
         if self.are_mapped(l, r) {
-            return OptionalPair::None;
+            return Neither;
         }
         let l_hash = make_hash::<L, S>(&self.hash_builder, l);
         let r_hash = make_hash::<R, S>(&self.hash_builder, r);
@@ -287,7 +288,7 @@ where
                         left.hash = Some(r_hash);
                         right.hash = Some(l_hash);
                         right.id = left.id;
-                        OptionalPair::None
+                        Neither
                     }
                     (Some(lp_hash), None) => {
                         left.hash = Some(r_hash);
@@ -295,7 +296,7 @@ where
                         let old_id = left.id;
                         // Here, we give the left item the new id to avoid a collision in the right set
                         left.id = right.id;
-                        OptionalPair::SomeRight(
+                        SomeRight(
                             self.right_set
                                 .remove_entry(lp_hash, just_id(old_id))
                                 .unwrap()
@@ -308,7 +309,7 @@ where
                         let old_id = right.id;
                         // Here, we give the left item the new id to avoid a collision in the right set
                         right.id = left.id;
-                        OptionalPair::SomeLeft(
+                        SomeLeft(
                             self.left_set
                                 .remove_entry(rp_hash, hash_and_id(r_hash, old_id))
                                 .unwrap()
@@ -324,7 +325,7 @@ where
                         left.id = self.counter;
                         right.id = self.counter;
                         self.counter += 1;
-                        OptionalPair::SomeBoth(
+                        SomeBoth(
                             self.left_set
                                 .remove_entry(rp_hash, just_id(old_r_id))
                                 .unwrap()
@@ -337,7 +338,7 @@ where
                     }
                 }
             }
-            _ => OptionalPair::None,
+            _ => Neither,
         }
     }
 
@@ -414,7 +415,7 @@ where
             if let Some(p) = self.left_set.remove_entry(l_hash, equivalent_key(item)) {
                 p
             } else {
-                return OptionalPair::None;
+                return Neither;
             };
         let right_value: Option<R> = if let Some(hash) = left_pairing.hash {
             Some(
@@ -436,7 +437,7 @@ where
             if let Some(p) = self.right_set.remove_entry(r_hash, equivalent_key(item)) {
                 p
             } else {
-                return OptionalPair::None;
+                return Neither;
             };
         let left_value: Option<L> = if let Some(hash) = right_pairing.hash {
             Some(
@@ -487,7 +488,7 @@ where
         let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
             Some(p) => p,
             None => {
-                return OptionalPair::None;
+                return Neither;
             }
         };
         if let Some(hash) = l_pairing.hash {
@@ -519,9 +520,9 @@ where
         );
         // Return old left pairing
         if eq_opt.is_none() {
-            OptionalPair::SomeLeft(old_left_item)
+            SomeLeft(old_left_item)
         } else {
-            OptionalPair::SomeBoth(old_left_item, eq_opt)
+            SomeBoth(old_left_item, eq_opt)
         }
     }
 
@@ -537,7 +538,7 @@ where
     ) -> OptionalPair<L, OptionalPair<L, R>> {
         // Check if old and expected are mapped
         if !self.are_mapped(old, expected) {
-            return OptionalPair::None;
+            return Neither;
         }
         self.swap_left(old, new)
     }
@@ -558,8 +559,8 @@ where
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(new, to_insert) {
-                (OptionalPair::None, OptionalPair::None) => OptionalPair::None,
-                (OptionalPair::None, pair) => OptionalPair::SomeRight(pair),
+                (Neither, Neither) => Neither,
+                (Neither, pair) => SomeRight(pair),
                 _ => {
                     unreachable!("There isn't a left item")
                 }
@@ -575,7 +576,7 @@ where
             self.remove_via_left(new)
         } else {
             // If old and new are the same, they we are updating an cycle
-            OptionalPair::None
+            Neither
         }
     }
 
@@ -590,7 +591,7 @@ where
         let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
             Some(p) => p,
             None => {
-                return OptionalPair::None;
+                return Neither;
             }
         };
         if let Some(hash) = r_pairing.hash {
@@ -622,9 +623,9 @@ where
         );
         // Return old right pairing
         if eq_opt.is_none() {
-            OptionalPair::SomeLeft(old_right_item)
+            SomeLeft(old_right_item)
         } else {
-            OptionalPair::SomeBoth(old_right_item, eq_opt)
+            SomeBoth(old_right_item, eq_opt)
         }
     }
 
@@ -640,7 +641,7 @@ where
     ) -> OptionalPair<R, OptionalPair<L, R>> {
         // Check if old and expected are mapped
         if !self.are_mapped(expected, old) {
-            return OptionalPair::None;
+            return Neither;
         } // Things can be removed after this point
         self.swap_right(old, new)
     }
@@ -666,8 +667,8 @@ where
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
             match self.insert(to_insert, new) {
-                (OptionalPair::None, OptionalPair::None) => OptionalPair::None,
-                (pair, OptionalPair::None) => OptionalPair::SomeRight(pair),
+                (Neither, Neither) => Neither,
+                (pair, Neither) => SomeRight(pair),
                 _ => {
                     unreachable!("There isn't a left item")
                 }
@@ -683,7 +684,7 @@ where
             self.remove_via_right(new)
         } else {
             // If old and new are the same, they we are updating an cycle
-            OptionalPair::None
+            Neither
         }
     }
 
@@ -864,12 +865,12 @@ where
         for op in self.iter_unmapped() {
             if !f(&op) {
                 match op {
-                    OptionalPair::SomeLeft(left) => {
+                    SomeLeft(left) => {
                         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                         let id = self.get_left_inner_with_hash(left, l_hash).unwrap().id;
                         to_drop.push((Some(l_hash), None, id));
                     }
-                    OptionalPair::SomeRight(right) => {
+                    SomeRight(right) => {
                         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
                         let id = self.get_right_inner_with_hash(right, r_hash).unwrap().id;
                         to_drop.push((None, Some(r_hash), id));
@@ -943,9 +944,9 @@ where
             return false;
         }
         self.iter().all(|op| match op {
-            OptionalPair::SomeLeft(l) => other.get_right(l).is_none(),
-            OptionalPair::SomeRight(r) => other.get_left(r).is_none(),
-            OptionalPair::SomeBoth(l, r) => other.are_mapped(l, r),
+            SomeLeft(l) => other.get_right(l).is_none(),
+            SomeRight(r) => other.get_left(r).is_none(),
+            SomeBoth(l, r) => other.are_mapped(l, r),
             _ => {
                 unreachable!("There has to be at least one item.")
             }
@@ -1055,14 +1056,14 @@ where
     fn extend<T: IntoIterator<Item = OptionalPair<L, R>>>(&mut self, iter: T) {
         for op in iter {
             match op {
-                OptionalPair::None => {}
-                OptionalPair::SomeLeft(l) => {
+                Neither => {}
+                SomeLeft(l) => {
                     self.insert_left(l);
                 }
-                OptionalPair::SomeRight(r) => {
+                SomeRight(r) => {
                     self.insert_right(r);
                 }
-                OptionalPair::SomeBoth(l, r) => {
+                SomeBoth(l, r) => {
                     self.insert(l, r);
                 }
             }
@@ -1283,7 +1284,7 @@ where
             if l.hash.is_some() {
                 continue;
             }
-            return Some(OptionalPair::SomeLeft(&l.value));
+            return Some(SomeLeft(&l.value));
         }
         while let Some(r_pairing) = self.right_iter.next() {
             let r = unsafe { r_pairing.as_ref() };
@@ -1291,7 +1292,7 @@ where
             if r.hash.is_some() {
                 continue;
             }
-            return Some(OptionalPair::SomeRight(&r.value));
+            return Some(SomeRight(&r.value));
         }
         None
     }

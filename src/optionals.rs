@@ -7,14 +7,15 @@ use std::fmt;
 /// # Examples
 /// ```rust
 /// use cycle_map::optionals::OptionalPair;
+/// use OptionalPair::*;
 ///
-/// let op: OptionalPair<String, String> = OptionalPair::SomeLeft("Hello".to_string());
+/// let op: OptionalPair<String, String> = SomeLeft("Hello".to_string());
 ///
 /// match op {
-///     OptionalPair::None => { /*...*/ },
-///     OptionalPair::SomeLeft(left) => { /*...*/ },
-///     OptionalPair::SomeRight(right) => { /*...*/ },
-///     OptionalPair::SomeBoth(left, right) => { /*...*/ },
+///     Neither => { /*...*/ },
+///     SomeLeft(left) => { /*...*/ },
+///     SomeRight(right) => { /*...*/ },
+///     SomeBoth(left, right) => { /*...*/ },
 /// }
 /// ```
 #[derive(PartialEq, Eq)]
@@ -24,7 +25,7 @@ where
     R: Eq,
 {
     /// Equivalent to `Option`'s `None` variant
-    None,
+    Neither,
     /// Equivalent to `Some(Some((left, right)), None)`
     SomeLeft(L),
     /// Equivalent to `Some(None, Some((left, right)))`
@@ -32,6 +33,8 @@ where
     /// Equivalent to `Some(Some((l1, r1)), Some(l2, r2))`
     SomeBoth(L, R),
 }
+
+use OptionalPair::*;
 
 /// A shorthand for an optional pair of tuples used in some map insert methods
 pub type InsertOptional<L, R> = OptionalPair<(L, R), (L, R)>;
@@ -42,9 +45,9 @@ where
     L: Eq,
     R: Eq,
 {
-    /// Returns true if `self` is `OptionalPair::None` and false otherwise
+    /// Returns true if `self` is `OptionalPair::Neither` and false otherwise
     pub fn is_none(&self) -> bool {
-        *self == OptionalPair::None
+        *self == OptionalPair::Neither
     }
 
     /// Returns the negation of [`is_none`]
@@ -57,7 +60,7 @@ where
     /// Return an optional reference to the left item
     pub fn get_left(&self) -> Option<&L> {
         match self {
-            Self::SomeLeft(l) | Self::SomeBoth(l, _) => Some(l),
+            SomeLeft(l) | SomeBoth(l, _) => Some(l),
             _ => None,
         }
     }
@@ -65,7 +68,7 @@ where
     /// Return an optional reference to the right item
     pub fn get_right(&self) -> Option<&R> {
         match self {
-            Self::SomeRight(r) | Self::SomeBoth(_, r) => Some(r),
+            SomeRight(r) | SomeBoth(_, r) => Some(r),
             _ => None,
         }
     }
@@ -89,10 +92,10 @@ where
         RF: FnOnce(R) -> B,
     {
         match self {
-            Self::None => OptionalPair::None,
-            Self::SomeLeft(l) => OptionalPair::SomeLeft(left(l)),
-            Self::SomeRight(r) => OptionalPair::SomeRight(right(r)),
-            Self::SomeBoth(l, r) => OptionalPair::SomeBoth(left(l), right(r)),
+            Neither => Neither,
+            SomeLeft(l) => SomeLeft(left(l)),
+            SomeRight(r) => SomeRight(right(r)),
+            SomeBoth(l, r) => SomeBoth(left(l), right(r)),
         }
     }
 
@@ -103,10 +106,10 @@ where
         F: FnOnce(L) -> A,
     {
         match self {
-            Self::None => OptionalPair::None,
-            Self::SomeRight(r) => OptionalPair::SomeRight(r),
-            Self::SomeLeft(l) => OptionalPair::SomeLeft(f(l)),
-            Self::SomeBoth(l, r) => OptionalPair::SomeBoth(f(l), r),
+            Neither => Neither,
+            SomeRight(r) => SomeRight(r),
+            SomeLeft(l) => SomeLeft(f(l)),
+            SomeBoth(l, r) => SomeBoth(f(l), r),
         }
     }
 
@@ -117,10 +120,10 @@ where
         F: FnOnce(R) -> A,
     {
         match self {
-            Self::None => OptionalPair::None,
-            Self::SomeLeft(l) => OptionalPair::SomeLeft(l),
-            Self::SomeRight(r) => OptionalPair::SomeRight(f(r)),
-            Self::SomeBoth(l, r) => OptionalPair::SomeBoth(l, f(r)),
+            Neither => Neither,
+            SomeLeft(l) => SomeLeft(l),
+            SomeRight(r) => SomeRight(f(r)),
+            SomeBoth(l, r) => SomeBoth(l, f(r)),
         }
     }
 }
@@ -134,10 +137,10 @@ where
     /// `OptionalPair` of clones of those values.
     pub fn cloned(&self) -> OptionalPair<L, R> {
         match self {
-            Self::None => OptionalPair::None,
-            Self::SomeLeft(l) => OptionalPair::SomeLeft((*l).clone()),
-            Self::SomeRight(r) => OptionalPair::SomeRight((*r).clone()),
-            Self::SomeBoth(l, r) => OptionalPair::SomeBoth((*l).clone(), (*r).clone()),
+            Neither => Neither,
+            SomeLeft(l) => SomeLeft((*l).clone()),
+            SomeRight(r) => SomeRight((*r).clone()),
+            SomeBoth(l, r) => SomeBoth((*l).clone(), (*r).clone()),
         }
     }
 }
@@ -149,10 +152,10 @@ where
 {
     fn clone(&self) -> Self {
         match self {
-            Self::None => OptionalPair::None,
-            Self::SomeLeft(l) => OptionalPair::SomeLeft(l.clone()),
-            Self::SomeRight(r) => OptionalPair::SomeRight(r.clone()),
-            Self::SomeBoth(l, r) => OptionalPair::SomeBoth(l.clone(), r.clone()),
+            Neither => Neither,
+            SomeLeft(l) => SomeLeft(l.clone()),
+            SomeRight(r) => SomeRight(r.clone()),
+            SomeBoth(l, r) => SomeBoth(l.clone(), r.clone()),
         }
     }
 }
@@ -164,16 +167,16 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::None => {
+            Neither => {
                 write!(f, "None")
             }
-            Self::SomeLeft(item) => {
+            SomeLeft(item) => {
                 write!(f, "SomeLeft( {item:?} )")
             }
-            Self::SomeRight(item) => {
+            SomeRight(item) => {
                 write!(f, "SomeRight( {item:?} )")
             }
-            Self::SomeBoth(l_item, r_item) => {
+            SomeBoth(l_item, r_item) => {
                 write!(f, "SomeBoth( {l_item:?}, {r_item:?} )")
             }
         }
@@ -187,10 +190,10 @@ where
 {
     fn from(input_pair: (Option<L>, Option<R>)) -> Self {
         match input_pair {
-            (None, None) => Self::None,
-            (Some(item), None) => Self::SomeLeft(item),
-            (None, Some(item)) => Self::SomeRight(item),
-            (Some(item_1), Some(item_2)) => Self::SomeBoth(item_1, item_2),
+            (None, None) => Neither,
+            (Some(item), None) => SomeLeft(item),
+            (None, Some(item)) => SomeRight(item),
+            (Some(item_1), Some(item_2)) => SomeBoth(item_1, item_2),
         }
     }
 }
@@ -202,10 +205,10 @@ where
 {
     fn from(input_pair: Option<(Option<L>, Option<R>)>) -> Self {
         match input_pair {
-            None | Some((None, None)) => Self::None,
-            Some((Some(item), None)) => Self::SomeLeft(item),
-            Some((None, Some(item))) => Self::SomeRight(item),
-            Some((Some(item_1), Some(item_2))) => Self::SomeBoth(item_1, item_2),
+            None | Some((None, None)) => Neither,
+            Some((Some(item), None)) => SomeLeft(item),
+            Some((None, Some(item))) => SomeRight(item),
+            Some((Some(item_1), Some(item_2))) => SomeBoth(item_1, item_2),
         }
     }
 }
@@ -217,10 +220,10 @@ where
 {
     fn from(input_pair: OptionalPair<L, R>) -> Self {
         match input_pair {
-            OptionalPair::None => (None, None),
-            OptionalPair::SomeLeft(item) => (Some(item), None),
-            OptionalPair::SomeRight(item) => (None, Some(item)),
-            OptionalPair::SomeBoth(item_1, item_2) => (Some(item_1), Some(item_2)),
+            Neither => (None, None),
+            SomeLeft(item) => (Some(item), None),
+            SomeRight(item) => (None, Some(item)),
+            SomeBoth(item_1, item_2) => (Some(item_1), Some(item_2)),
         }
     }
 }
@@ -232,10 +235,10 @@ where
 {
     fn from(input_pair: OptionalPair<L, R>) -> Self {
         match input_pair {
-            OptionalPair::None => None,
-            OptionalPair::SomeLeft(item) => Some((Some(item), None)),
-            OptionalPair::SomeRight(item) => Some((None, Some(item))),
-            OptionalPair::SomeBoth(item_1, item_2) => Some((Some(item_1), Some(item_2))),
+            Neither => None,
+            SomeLeft(item) => Some((Some(item), None)),
+            SomeRight(item) => Some((None, Some(item))),
+            SomeBoth(item_1, item_2) => Some((Some(item_1), Some(item_2))),
         }
     }
 }

@@ -54,6 +54,22 @@ where
         !self.is_none()
     }
 
+    /// Return an optional reference to the left item
+    pub fn get_left(&self) -> Option<&L> {
+        match self {
+            Self::SomeLeft(l) | Self::SomeBoth(l, _) => Some(l),
+            _ => None,
+        }
+    }
+
+    /// Return an optional reference to the right item
+    pub fn get_right(&self) -> Option<&R> {
+        match self {
+            Self::SomeRight(r) | Self::SomeBoth(_, r) => Some(r),
+            _ => None,
+        }
+    }
+
     /// Converts the pair into a new pair. The types of the new pair need to implement a
     /// converation `From` the old types. This consumes the old pair
     pub fn convert<A, B>(self) -> OptionalPair<A, B>
@@ -116,8 +132,7 @@ where
 {
     /// Takes an `OptionalPair` that contains references to clonable values and returns an
     /// `OptionalPair` of clones of those values.
-    pub fn cloned(&self) -> OptionalPair<L, R>
-    {
+    pub fn cloned(&self) -> OptionalPair<L, R> {
         match self {
             Self::None => OptionalPair::None,
             Self::SomeLeft(l) => OptionalPair::SomeLeft((*l).clone()),

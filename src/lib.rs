@@ -11,6 +11,9 @@
 //! (i.e. one-to-one). One map, [`CycleMap`], forces every item to be paired. The other,
 //! [`PartialCycleMap`] allows for items to be unpaired. The other two, `MultiCycleMap` and
 //! `PartialMultiCycleMap`, work similarly but are many-to-one maps.
+//!
+//! CycleMap is build on top of [`hashbrown`]. All maps use its default hashing algorithm, but
+//! different hashing algorithms can be specified on creation of any map.
 
 #![deny(unused_imports, missing_debug_implementations, unreachable_pub)]
 #![cfg_attr(doc, deny(missing_docs, rustdoc::broken_intra_doc_links))]
@@ -28,6 +31,7 @@ pub use crate::partial_cycle_map::PartialCycleMap;
 
 /// Enums similar to Option
 pub mod optionals;
+pub use crate::optionals::*;
 
 /// Various helpful functions
 pub(crate) mod utils;

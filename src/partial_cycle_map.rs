@@ -715,14 +715,12 @@ where
         }
     }
 
-    /* Might be used in the future
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
-    fn get_via_hashes_and_id(&mut self, l_hash: u64, r_hash: u64, id: u64) -> Option<(&L, &R)> {
+    fn get_via_hashes_and_id(&self, l_hash: u64, r_hash: u64, id: u64) -> Option<(&L, &R)> {
         let left_pairing = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
         let right_pairing = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
         Some((&left_pairing.value, &right_pairing.value))
     }
-    */
 
     #[inline]
     fn get_left_inner(&self, item: &L) -> Option<&MappingPair<L>> {
@@ -788,6 +786,53 @@ where
         }
     }
 
+    /// Drops all items that cause the predicate to return `false` while keeping the backing memory
+    /// allocated
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&OptionalPair<&L, &R>) -> bool,
+    {
+        let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
+            Vec::with_capacity(self.left_set.len());
+        for op in self.iter() {
+            if !f(&op) {
+                let (left, right): (Option<&L>, Option<&R>) = op.into();
+                let l_hash: Option<u64> = if left.is_some() {
+                    Some(make_hash::<L, S>(&self.hash_builder, left.unwrap()))
+                } else {
+                    None
+                };
+                let r_hash: Option<u64> = if right.is_some() {
+                    Some(make_hash::<R, S>(&self.hash_builder, right.unwrap()))
+                } else {
+                    None
+                };
+                let id = if left.is_some() {
+                    self.get_left_inner(left.unwrap()).unwrap().id
+                } else {
+                    self.get_right_inner(right.unwrap()).unwrap().id
+                };
+                to_drop.push((l_hash, r_hash, id));
+            }
+        }
+        for tup in to_drop {
+            match tup {
+                (Some(l), Some(r), id) => {
+                    self.remove_via_hashes_and_id(l, r, id);
+                }
+                (Some(l), None, id) => {
+                    self.left_set.remove_entry(l, |p| p.id == id);
+                }
+                (None, Some(r), id) => {
+                    self.right_set.remove_entry(r, |p| p.id == id);
+                }
+                _ => {
+                    unreachable!("There is either some left or some right hash.");
+                }
+            }
+        }
+    }
+
     /// Drops all pairs that cause the predicate to return `false` while keeping the backing memory
     /// allocated
     pub fn retain_mapped<F>(&mut self, mut f: F)
@@ -845,53 +890,6 @@ where
                 }
                 _ => {
                     unreachable!("We are only iterating over unpaired items.");
-                }
-            }
-        }
-    }
-
-    /// Drops all items that cause the predicate to return `false` while keeping the backing memory
-    /// allocated
-    pub fn retain<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&OptionalPair<&L, &R>) -> bool,
-    {
-        let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
-            Vec::with_capacity(self.left_set.len());
-        for op in self.iter() {
-            if !f(&op) {
-                let (left, right): (Option<&L>, Option<&R>) = op.into();
-                let l_hash: Option<u64> = if left.is_some() {
-                    Some(make_hash::<L, S>(&self.hash_builder, left.unwrap()))
-                } else {
-                    None
-                };
-                let r_hash: Option<u64> = if right.is_some() {
-                    Some(make_hash::<R, S>(&self.hash_builder, right.unwrap()))
-                } else {
-                    None
-                };
-                let id = if left.is_some() {
-                    self.get_left_inner(left.unwrap()).unwrap().id
-                } else {
-                    self.get_right_inner(right.unwrap()).unwrap().id
-                };
-                to_drop.push((l_hash, r_hash, id));
-            }
-        }
-        for tup in to_drop {
-            match tup {
-                (Some(l), Some(r), id) => {
-                    self.remove_via_hashes_and_id(l, r, id);
-                }
-                (Some(l), None, id) => {
-                    self.left_set.remove_entry(l, |p| p.id == id);
-                }
-                (None, Some(r), id) => {
-                    self.right_set.remove_entry(r, |p| p.id == id);
-                }
-                _ => {
-                    unreachable!("There is either some left or some right hash.");
                 }
             }
         }
@@ -1202,19 +1200,20 @@ where
     type Item = (&'a L, &'a R);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Ignore all unpaired items
-        match self
-            .left_iter
-            .next()
-            .filter(|p| unsafe { p.as_ref().hash.is_some() })
-        {
-            Some(l) => unsafe {
-                let left = &l.as_ref().value;
-                let right = self.map_ref.get_right(left).unwrap();
-                Some((left, right))
-            },
-            None => None,
+        while let Some(l_pairing) = self.left_iter.next() {
+            // Ignore all unpaired items
+            let l = unsafe { l_pairing.as_ref() };
+            if l.hash.is_none() {
+                continue;
+            }
+            let left = &l.value;
+            let l_hash = make_hash(self.map_ref.hasher(), left);
+            let id = l.id;
+            return self
+                .map_ref
+                .get_via_hashes_and_id(l_hash, l.hash.unwrap(), id);
         }
+        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -1278,25 +1277,23 @@ where
     type Item = OptionalPair<&'a L, &'a R>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Ignore all unpaired items
-        match self
-            .left_iter
-            .next()
-            .filter(|p| unsafe { p.as_ref().hash.is_none() })
-        {
-            Some(l) => unsafe { Some(OptionalPair::SomeLeft(&l.as_ref().value)) },
-            None => {
-                // Ignore all right items that are paired, we've seen those already
-                match self
-                    .right_iter
-                    .next()
-                    .filter(|p| unsafe { p.as_ref().hash.is_none() })
-                {
-                    Some(r) => unsafe { Some(OptionalPair::SomeRight(&r.as_ref().value)) },
-                    None => None,
-                }
+        while let Some(l_pairing) = self.left_iter.next() {
+            let l = unsafe { l_pairing.as_ref() };
+            // Ignore all paired items
+            if l.hash.is_some() {
+                continue;
             }
+            return Some(OptionalPair::SomeLeft(&l.value));
         }
+        while let Some(r_pairing) = self.right_iter.next() {
+            let r = unsafe { r_pairing.as_ref() };
+            // Ignore all paired items
+            if r.hash.is_some() {
+                continue;
+            }
+            return Some(OptionalPair::SomeRight(&r.value));
+        }
+        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

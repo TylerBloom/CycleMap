@@ -243,17 +243,103 @@ mod tests {
     fn retain_test() {
         let mut map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
         for i in 0..100 {
-            let opt = map.insert(i, i.to_string());
-            assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
+            if i < 34 {
+                let opt = map.insert(i, i.to_string());
+                assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
+            } else if i < 67 {
+                let opt = map.insert_left(i);
+                assert_eq!(opt, OptionalPair::None);
+            } else {
+                let opt = map.insert_right(i.to_string());
+                assert_eq!(opt, OptionalPair::None);
+            }
         }
-        assert_eq!(map.len_left(), 100);
-        assert_eq!(map.len_right(), 100);
-        map.retain_mapped(|x, _| x % 2 == 0);
+        assert_eq!(map.len_left(), 67);
+        assert_eq!(map.len_right(), 67);
+        map.retain(|x| {
+            if let Some(l) = x.get_left() {
+                *l % 2 == 0
+            } else {
+                true
+            }
+        });
+        assert_eq!(map.len_left(), 34);
+        assert_eq!(map.len_right(), 50);
+        for op in map.iter() {
+            match op {
+                OptionalPair::SomeLeft(val) | OptionalPair::SomeBoth(val, _) => {
+                    assert_eq!(val % 2, 0);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn retain_mapped_test() {
+        let mut map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
+        for i in 0..100 {
+            if i < 34 {
+                let opt = map.insert(i, i.to_string());
+                assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
+            } else if i < 67 {
+                let opt = map.insert_left(i);
+                assert_eq!(opt, OptionalPair::None);
+            } else {
+                let opt = map.insert_right(i.to_string());
+                assert_eq!(opt, OptionalPair::None);
+            }
+        }
+        assert_eq!(map.len_left(), 67);
+        assert_eq!(map.len_right(), 67);
+        map.retain_mapped(|l, _| *l % 2 == 0);
         assert_eq!(map.len_left(), 50);
         assert_eq!(map.len_right(), 50);
-        for (val, s) in map.iter_mapped() {
-            assert_eq!(val % 2, 0);
-            println!("{val}, {s}");
+        for op in map.iter() {
+            println!("{op:?}");
+            match op {
+                OptionalPair::SomeBoth(val, _) => {
+                    assert_eq!(val % 2, 0);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn retain_unmapped_test() {
+        let mut map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
+        for i in 0..100 {
+            if i < 34 {
+                let opt = map.insert(i, i.to_string());
+                assert_eq!(opt, (OptionalPair::None, OptionalPair::None));
+            } else if i < 67 {
+                let opt = map.insert_left(i);
+                assert_eq!(opt, OptionalPair::None);
+            } else {
+                let opt = map.insert_right(i.to_string());
+                assert_eq!(opt, OptionalPair::None);
+            }
+        }
+        assert_eq!(map.len_left(), 67);
+        assert_eq!(map.len_right(), 67);
+        map.retain_unmapped(|op| {
+            if let Some(l) = op.get_left() {
+                *l % 2 == 0
+            } else {
+                true
+            }
+        });
+        assert_eq!(map.len_left(), 51);
+        assert_eq!(map.len_right(), 67);
+        for op in map.iter() {
+            println!("{op:?}");
+            match op {
+                OptionalPair::SomeLeft(val) => {
+                    assert_eq!(val % 2, 0);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -288,10 +374,12 @@ mod tests {
         assert_eq!(iter.clone().len(), 10);
         assert_eq!(
             iter.cloned().collect::<HashSet<TestingStruct>>(),
-            (0..10).map(|i| TestingStruct::from_value(i)).collect::<HashSet<TestingStruct>>()
+            (0..10)
+                .map(|i| TestingStruct::from_value(i))
+                .collect::<HashSet<TestingStruct>>()
         );
     }
-    
+
     #[test]
     fn mapped_iter_tests() {
         // Mapped iter
@@ -316,7 +404,7 @@ mod tests {
             PartialCycleMap::new()
         );
     }
-    
+
     #[test]
     fn unmapped_iter_tests() {
         // Unmapped iter

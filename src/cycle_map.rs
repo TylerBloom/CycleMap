@@ -41,6 +41,37 @@ pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
 /// It does this while maintaining the same complexitity for lookups
 /// as a traditional hash map and while only keeping a single copy of each element.
 ///
+/// # Examples
+/// ```
+/// use cycle_map::CycleMap;
+///
+/// let values = vec![ ("zero", 0), ("one", 1), ("two", 2), ("three", 3), ("four", 4), ("five", 5),
+/// ("six", 6), ("seven", 7), ("eight", 8), ("nine", 9), ];
+///
+/// let mut converter: CycleMap<String, u64> = values.iter().map(|(s,i)| (s.to_string(),*i)).collect();
+///
+/// // The map should contain 10 pairs
+/// assert_eq!(converter.len(), 10);
+///
+/// // See if your value number is here
+/// if converter.contains_right(&42) {
+///     println!( "I know the answer to life!!" );
+/// }
+///
+/// // Get a value from either side!
+/// assert_eq!(converter.get_left(&7), Some(&"seven".to_string()));
+/// assert_eq!(converter.get_right(&"three".to_string()), Some(&3));
+///
+/// // Removing an item removes the whole pair
+/// assert_eq!(converter.remove_via_right(&7), Some(("seven".to_string(), 7)));
+/// assert_eq!(converter.remove_via_left(&"three".to_string()), Some(("three".to_string(), 3)));
+///
+/// // Remove all pairs with an odd right item
+/// converter.retain(|_,i| i % 2 == 0);
+/// assert!(converter.contains_right(&2));
+///
+/// ```
+///
 /// A CycleMap contains a "left" and "right" set.
 /// On insert, the given pair
 /// of items is split. The left item is stored in the left set with the hash of the right item,
@@ -587,7 +618,7 @@ where
             left_set: self.left_set.clone(),
             right_set: self.right_set.clone(),
             counter: self.counter,
-            hash_builder: self.hash_builder.clone()
+            hash_builder: self.hash_builder.clone(),
         }
     }
 }

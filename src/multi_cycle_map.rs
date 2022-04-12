@@ -2,13 +2,13 @@ use std::{
     default::Default,
     fmt,
     hash::{BuildHasher, Hash},
-    iter::FusedIterator,
-    marker::PhantomData,
+    iter::{FusedIterator, Map},
 };
 
 use hashbrown::{
     hash_map::DefaultHashBuilder,
-    raw::{RawIter, RawTable},
+    hash_set,
+    raw::{Bucket, RawIter, RawTable},
     HashSet,
 };
 
@@ -35,6 +35,18 @@ pub(crate) fn right_hash_and_id<'a, T: PartialEq + ?Sized>(
     move |x| x.pairs.contains(pair)
 }
 
+pub(crate) fn left_just_id<'a, T: PartialEq + ?Sized>(
+    id: u64,
+) -> impl Fn(&LeftItem<T>) -> bool + 'a {
+    move |x| x.id == id
+}
+
+pub(crate) fn right_just_id<'a, T: PartialEq + ?Sized>(
+    id: u64,
+) -> impl Fn(&RightItem<T>) -> bool + 'a {
+    move |x| x.id == id
+}
+
 // Contains a value and the hash of the item that the value maps to.
 pub(crate) struct LeftItem<T> {
     pub(crate) value: T,
@@ -46,6 +58,7 @@ pub(crate) struct LeftItem<T> {
 pub(crate) struct RightItem<T> {
     pub(crate) value: T,
     pub(crate) pairs: HashSet<(u64, u64)>, // Contains (hash, id) of pair items
+    pub(crate) id: u64, // Right items don't have to be paired, so an id is needed
 }
 
 /// Similar to [`CycleMap`] but items might be not paired.
@@ -103,7 +116,9 @@ where
         let right_item = RightItem {
             value: right,
             pairs: set,
+            id: self.counter,
         };
+        self.counter += 1;
         self.left_set.insert(
             l_hash,
             left_item,
@@ -160,6 +175,7 @@ where
         let right_item = RightItem {
             value: right,
             pairs: HashSet::new(),
+            id: self.counter,
         };
         self.counter += 1;
         self.right_set.insert(
@@ -284,25 +300,21 @@ where
         None
     }
 
-    /* Might need in the future... unlikely though
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
-    fn remove_via_hashes_and_id(
-        &mut self,
-        l_hash: u64,
-        r_hash: u64,
-        id: u64,
-    ) -> OptionalPair<L, R> {
-        let left_opt = self
-            .left_set
-            .remove_entry(l_hash, hash_and_id(r_hash, id))
-            .map(|opt_l| opt_l.extract());
-        let right_opt = self
-            .right_set
-            .remove_entry(r_hash, hash_and_id(l_hash, id))
-            .map(|opt_r| opt_r.extract());
-        OptionalPair::from((left_opt, right_opt))
+    fn remove_via_hash_and_id(&mut self, r_hash: u64, id: u64) -> Option<(Vec<L>, R)> {
+        let right = self.right_set.remove_entry(r_hash, right_just_id(id))?;
+        let left_vec = right
+            .pairs
+            .iter()
+            .map(|(h, i)| {
+                self.left_set
+                    .remove_entry(*h, left_hash_and_id(r_hash, *i))
+                    .unwrap()
+                    .extract()
+            })
+            .collect();
+        Some((left_vec, right.extract()))
     }
-    */
 
     /// Returns an optional iterator over the items that the given item is paired with.
     /// `None` is returned if the given item can't be found.
@@ -314,7 +326,10 @@ where
     pub fn get_right(&self, item: &L) -> Option<&R> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_item: &LeftItem<L> = self.get_left_inner_with_hash(item, l_hash)?;
-        match self.right_set.get(left_item.hash, right_hash_and_id(&(l_hash, left_item.id))) {
+        match self
+            .right_set
+            .get(left_item.hash, right_hash_and_id(&(l_hash, left_item.id)))
+        {
             None => None,
             Some(pairing) => Some(&pairing.value),
         }
@@ -323,9 +338,9 @@ where
     /* Might need again... unlikely though
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
     fn get_via_hashes_and_id(&self, l_hash: u64, r_hash: u64, id: u64) -> Option<(&L, &R)> {
-        let left_item = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
-        let right_item = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
-        Some((&left_item.value, &right_item.value))
+    let left_item = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
+    let right_item = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
+    Some((&left_item.value, &right_item.value))
     }
     */
 
@@ -355,6 +370,7 @@ where
     pub fn iter(&self) -> Iter<'_, L, R, S> {
         Iter {
             right_iter: unsafe { self.right_set.iter() },
+            left_iter: None,
             map_ref: self,
         }
     }
@@ -362,13 +378,14 @@ where
     /// Returns an iterator over the paired items in the map
     pub fn iter_mapped(&self) -> MappedIter<'_, L, R, S> {
         MappedIter {
-            right_iter: unsafe { self.right_set.iter() },
+            left_iter: unsafe { self.left_set.iter() },
             map_ref: self,
         }
     }
 
     /// Returns an iterator over the unpaired items in the map
     pub fn iter_unmapped(&self) -> UnmappedIter<'_, L, R, S> {
+        //let closure: P = move |b| { b.as_ref().pairs.len() == 0 };
         UnmappedIter {
             right_iter: unsafe { self.right_set.iter() },
             map_ref: self,
@@ -376,18 +393,16 @@ where
     }
 
     /// Returns an iterator over elements in the left set
-    pub fn iter_left(&self) -> SingleIter<'_, L> {
-        SingleIter {
+    pub fn iter_left(&self) -> LeftIter<L> {
+        LeftIter {
             iter: unsafe { self.left_set.iter() },
-            marker: PhantomData,
         }
     }
 
     /// Returns an iterator over elements in the right set
-    pub fn iter_right(&self) -> SingleIter<'_, R> {
-        SingleIter {
+    pub fn iter_right(&self) -> RightIter<R> {
+        RightIter {
             iter: unsafe { self.right_set.iter() },
-            marker: PhantomData,
         }
     }
 
@@ -395,15 +410,19 @@ where
     /// allocated
     pub fn retain<F>(&mut self, mut f: F)
     where
-        F: FnMut(&Option<&L>, &R) -> bool,
+        F: FnMut(Option<&L>, &R) -> bool,
     {
-        // right hash, left hash, left id
-        let mut to_drop: Vec<(u64, u64, u64)> =
-            Vec::with_capacity(self.left_set.len());
+        // right hash, left id
+        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
         for (opt_l, r) in self.iter() {
             if !f(opt_l, r) {
-                todo!()
+                let r_hash = make_hash::<R, S>(&self.hash_builder, &r);
+                let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
+                to_drop.push((r_hash, r_item.id));
             }
+        }
+        for (r_hash, id) in to_drop {
+            self.remove_via_hash_and_id(r_hash, id);
         }
     }
 
@@ -413,18 +432,17 @@ where
     where
         F: FnMut(&L, &R) -> bool,
     {
-        // right hash, left hash, left id
-        let mut to_drop: Vec<(u64, u64, u64)> = Vec::with_capacity(self.left_set.len());
-        for (left, right) in self.iter_mapped() {
-            if !f(left, right) {
-                let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-                let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-                let id = self.get_left_inner(left).unwrap().id;
-                to_drop.push((l_hash, r_hash, id));
+        // right hash, left id
+        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
+        for (l, r) in self.iter_mapped() {
+            if !f(l, r) {
+                let r_hash = make_hash::<R, S>(&self.hash_builder, &r);
+                let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
+                to_drop.push((r_hash, r_item.id));
             }
         }
-        for (l_hash, r_hash, id) in to_drop {
-            self.remove_via_hashes_and_id(l_hash, r_hash, id);
+        for (r_hash, id) in to_drop {
+            self.remove_via_hash_and_id(r_hash, id);
         }
     }
 
@@ -432,41 +450,19 @@ where
     /// allocated
     pub fn retain_unmapped<F>(&mut self, mut f: F)
     where
-        F: FnMut(&OptionalPair<&L, &R>) -> bool,
+        F: FnMut(&R) -> bool,
     {
-        let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
-            Vec::with_capacity(self.left_set.len());
-        for op in self.iter_unmapped() {
-            if !f(&op) {
-                match op {
-                    SomeLeft(left) => {
-                        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-                        let id = self.get_left_inner_with_hash(left, l_hash).unwrap().id;
-                        to_drop.push((Some(l_hash), None, id));
-                    }
-                    SomeRight(right) => {
-                        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-                        let id = self.get_right_inner_with_hash(right, r_hash).unwrap().id;
-                        to_drop.push((None, Some(r_hash), id));
-                    }
-                    _ => {
-                        unreachable!("We are only iterating over unpaired items.");
-                    }
-                }
+        // right hash, left id
+        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
+        for r in self.iter_unmapped() {
+            if !f(r) {
+                let r_hash = make_hash::<R, S>(&self.hash_builder, &r);
+                let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
+                to_drop.push((r_hash, r_item.id));
             }
         }
-        for tup in to_drop {
-            match tup {
-                (Some(l), None, id) => {
-                    self.left_set.remove_entry(l, |p| p.id == id);
-                }
-                (None, Some(r), id) => {
-                    self.right_set.remove_entry(r, |p| p.id == id);
-                }
-                _ => {
-                    unreachable!("We are only iterating over unpaired items.");
-                }
-            }
+        for (r_hash, id) in to_drop {
+            self.remove_via_hash_and_id(r_hash, id);
         }
     }
 }
@@ -577,8 +573,8 @@ impl<L, R, S> MultiCycleMap<L, R, S> {
     /* Might be used in the future
     /// Returns the raw capacity of the inner sets (same between sets)
     fn raw_capacity(&self) -> usize {
-        // The size of the sets is always equal
-        self.left_set.buckets()
+    // The size of the sets is always equal
+    self.left_set.buckets()
     }
     */
 
@@ -614,32 +610,11 @@ where
 {
     #[inline]
     fn extend<T: IntoIterator<Item = (L, R)>>(&mut self, iter: T) {
-        for (l, r) in iter {
-            self.insert(l, r);
-        }
-    }
-}
-
-impl<L, R, S> Extend<OptionalPair<L, R>> for MultiCycleMap<L, R, S>
-where
-    L: Hash + Eq,
-    R: Hash + Eq,
-    S: BuildHasher,
-{
-    #[inline]
-    fn extend<T: IntoIterator<Item = OptionalPair<L, R>>>(&mut self, iter: T) {
-        for op in iter {
-            match op {
-                Neither => {}
-                SomeLeft(l) => {
-                    self.insert_left(l);
-                }
-                SomeRight(r) => {
-                    self.insert_right(r);
-                }
-                SomeBoth(l, r) => {
-                    self.insert(l, r);
-                }
+        for (left, right) in iter {
+            if self.contains_right(&right) {
+                self.insert_left(left, &right);
+            } else {
+                self.insert(left, right);
             }
         }
     }
@@ -657,28 +632,18 @@ where
     }
 }
 
-impl<L, R> FromIterator<OptionalPair<L, R>> for MultiCycleMap<L, R>
-where
-    L: Hash + Eq,
-    R: Hash + Eq,
-{
-    fn from_iter<T: IntoIterator<Item = OptionalPair<L, R>>>(iter: T) -> Self {
-        let mut digest = MultiCycleMap::default();
-        digest.extend(iter);
-        digest
-    }
-}
-
 /// An iterator over the entry items of a `MultiCycleMap`.
 pub struct Iter<'a, L, R, S> {
-    left_iter: RawIter<LeftItem<L>>,
+    right_iter: RawIter<RightItem<R>>,
+    left_iter: Option<hash_set::Iter<'a, (u64, u64)>>,
     map_ref: &'a MultiCycleMap<L, R, S>,
 }
 
 impl<L, R, S> Clone for Iter<'_, L, R, S> {
     fn clone(&self) -> Self {
         Self {
-            left_iter: self.left_iter.clone(),
+            right_iter: self.right_iter.clone(),
+            left_iter: None,
             map_ref: self.map_ref,
         }
     }
@@ -701,21 +666,47 @@ where
     R: Hash + Eq,
     S: BuildHasher,
 {
-    type Item = OptionalPair<&'a L, &'a R>;
+    type Item = (Option<&'a L>, &'a R);
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.left_iter.next() {
-            Some(l) => unsafe {
-                let left = &l.as_ref().value;
-                let right = self.map_ref.get_right(left);
-                Some(OptionalPair::from((Some(left), right)))
-            },
+        if let Some(iter) = self.left_iter.as_mut() {
+            if let Some(pair) = iter.next() {
+                let left = self
+                    .map_ref
+                    .left_set
+                    .get(pair.0, left_just_id(pair.1))
+                    .unwrap();
+                let right = self
+                    .map_ref
+                    .right_set
+                    .get(left.hash, right_hash_and_id(pair))
+                    .unwrap();
+                return Some((Some(&left.value), &right.value));
+            }
+        }
+        match self.right_iter.next() {
+            Some(r) => {
+                let r_ref = unsafe { &r.as_ref() };
+                if r_ref.pairs.len() == 0 {
+                    return Some((None, &r_ref.value));
+                } else {
+                    let iter = r_ref.pairs.iter();
+                    let pair = iter.next().unwrap();
+                    self.left_iter = Some(iter);
+                    let left = self
+                        .map_ref
+                        .left_set
+                        .get(pair.0, left_just_id(pair.1))
+                        .unwrap();
+                    return Some((Some(&left.value), &r_ref.value));
+                }
+            }
             None => None,
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.left_iter.size_hint()
+        self.right_iter.size_hint()
     }
 }
 
@@ -741,7 +732,6 @@ where
 /// An iterator over the entry pairs of a `MultiCycleMap`.
 pub struct MappedIter<'a, L, R, S> {
     left_iter: RawIter<LeftItem<L>>,
-    right_iter: RawIter<RightItem<R>>,
     map_ref: &'a MultiCycleMap<L, R, S>,
 }
 
@@ -749,7 +739,6 @@ impl<L, R, S> Clone for MappedIter<'_, L, R, S> {
     fn clone(&self) -> Self {
         Self {
             left_iter: self.left_iter.clone(),
-            right_iter: self.right_iter.clone(),
             map_ref: self.map_ref,
         }
     }
@@ -775,20 +764,19 @@ where
     type Item = (&'a L, &'a R);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(l_item) = self.left_iter.next() {
-            // Ignore all unpaired items
-            let l = unsafe { l_item.as_ref() };
-            if l.hash.is_none() {
-                continue;
-            }
-            let left = &l.value;
-            let l_hash = make_hash(self.map_ref.hasher(), left);
-            let id = l.id;
-            return self
-                .map_ref
-                .get_via_hashes_and_id(l_hash, l.hash.unwrap(), id);
+        match self.left_iter.next() {
+            Some(l_bucket) => unsafe {
+                let l_item = l_bucket.as_ref();
+                let l_hash = make_hash::<L, S>(self.map_ref.hasher(), &l_item.value);
+                let r_item = self
+                    .map_ref
+                    .right_set
+                    .get(l_item.hash, right_hash_and_id(&(l_hash, l_item.id)))
+                    .unwrap();
+                return Some((&l_item.value, &r_item.value));
+            },
+            None => None,
         }
-        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -817,7 +805,6 @@ where
 
 /// An iterator over the entry pairs of a `MultiCycleMap`.
 pub struct UnmappedIter<'a, L, R, S> {
-    left_iter: RawIter<LeftItem<L>>,
     right_iter: RawIter<RightItem<R>>,
     map_ref: &'a MultiCycleMap<L, R, S>,
 }
@@ -825,7 +812,6 @@ pub struct UnmappedIter<'a, L, R, S> {
 impl<L, R, S> Clone for UnmappedIter<'_, L, R, S> {
     fn clone(&self) -> Self {
         Self {
-            left_iter: self.left_iter.clone(),
             right_iter: self.right_iter.clone(),
             map_ref: self.map_ref,
         }
@@ -849,30 +835,19 @@ where
     R: Hash + Eq,
     S: BuildHasher,
 {
-    type Item = OptionalPair<&'a L, &'a R>;
+    type Item = &'a R;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(l_item) = self.left_iter.next() {
-            let l = unsafe { l_item.as_ref() };
-            // Ignore all paired items
-            if l.hash.is_some() {
-                continue;
+        while let Some(item) = self.right_iter.next().map(|r| unsafe { &r.as_ref() }) {
+            if item.pairs.len() == 0 {
+                return Some(&item.value);
             }
-            return Some(SomeLeft(&l.value));
-        }
-        while let Some(r_item) = self.right_iter.next() {
-            let r = unsafe { r_item.as_ref() };
-            // Ignore all paired items
-            if r.hash.is_some() {
-                continue;
-            }
-            return Some(SomeRight(&r.value));
         }
         None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.left_iter.size_hint()
+        self.right_iter.size_hint()
     }
 }
 
@@ -896,59 +871,104 @@ where
 }
 
 /// An iterator over the elements of an inner set of a `MultiCycleMap`.
-pub struct SingleIter<'a, T> {
-    iter: RawIter<MappingPair<T>>,
-    marker: PhantomData<&'a T>,
+pub struct LeftIter<I> {
+    iter: I,
 }
 
-impl<T> Clone for SingleIter<'_, T> {
+impl<I> Clone for LeftIter<I>
+where
+    I: Clone,
+{
     fn clone(&self) -> Self {
         Self {
             iter: self.iter.clone(),
-            marker: PhantomData,
         }
     }
 }
 
-impl<T> fmt::Debug for SingleIter<'_, T>
+impl<I> fmt::Debug for LeftIter<I>
 where
-    T: Hash + Eq + fmt::Debug,
+    I: Iterator + Clone,
+    <I as Iterator>::Item: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.clone()).finish()
     }
 }
 
-impl<'a, T> Iterator for SingleIter<'a, T>
+impl<'a, I> Iterator for LeftIter<I>
 where
-    T: 'a + Hash + Eq,
+    I: Iterator,
 {
-    type Item = &'a T;
+    type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
-            Some(item) => {
-                let val = unsafe { &item.as_ref().value };
-                Some(val)
-            }
-            None => None,
-        }
+        self.iter.next()
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
     }
 }
 
-impl<T> ExactSizeIterator for SingleIter<'_, T>
+impl<'a, I> ExactSizeIterator for LeftIter<I>
 where
-    T: Hash + Eq,
+    I: ExactSizeIterator,
 {
     fn len(&self) -> usize {
         self.iter.len()
     }
 }
 
-impl<T> FusedIterator for SingleIter<'_, T> where T: Hash + Eq {}
+impl<I> FusedIterator for LeftIter<I> where I: FusedIterator {}
+
+/// An iterator over the elements of an inner set of a `MultiCycleMap`.
+pub struct RightIter<'_, R> {
+    right_iter: RawIter<RightItem<R>>,
+}
+
+impl<R> Clone for RightIter<R> {
+    fn clone(&self) -> Self {
+        Self {
+            right_iter: self.right_iter.clone(),
+        }
+    }
+}
+
+impl<R> fmt::Debug for RightIter<'_, R>
+where
+    Self: Clone,
+    R: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a, R> Iterator for RightIter<'a, R>
+{
+    type Item = &'a R;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(right) = self.iter.next() {
+            unsafe { Some(&right.as_ref().value) }
+        }
+        None
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<'a, I> ExactSizeIterator for RightIter<I>
+where
+    I: ExactSizeIterator,
+{
+    fn len(&self) -> usize {
+        self.iter.len()
+    }
+}
+
+impl<I> FusedIterator for RightIter<I> where I: FusedIterator {}
 
 impl<T> LeftItem<T> {
     // Consumes the pair and returns the held `T`
@@ -1028,7 +1048,7 @@ impl<T: Clone> Clone for RightItem<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
-            hash: self.hash,
+            pairs: self.pairs.clone(),
             id: self.id,
         }
     }
@@ -1038,8 +1058,8 @@ impl<T: fmt::Debug> fmt::Debug for RightItem<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "RightItem {{ value: {:?}, hash: {}, id: {} }}",
-            self.value, self.hash, self.id
+            "RightItem {{ value: {:?}, id: {}, pairs: {:?} }}",
+            self.value, self.id, self.pairs
         )
     }
 }
@@ -1072,55 +1092,55 @@ mod tests {
     /* Might be needed in the future
     #[test]
     fn get_inner_tests() {
-        let map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-            let left_opt = map.get_left_inner(&i_str);
-            assert!(left_opt.is_some());
-            let l_item = left_opt.unwrap();
-            assert_eq!(l_item.value, i_str);
-            assert_eq!(l_item.hash, r_hash);
-            let right_opt = map.get_right_inner(&i_struct);
-            assert!(right_opt.is_some());
-            let r_item = right_opt.unwrap();
-            assert_eq!(r_item.value, i_struct);
-            assert_eq!(r_item.hash, l_hash);
-        }
+    let map = construct_default_map();
+    for i in 0..100 {
+    let i_str = i.to_string();
+    let i_struct = TestingStruct::new(i, i.to_string());
+    let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
+    let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
+    let left_opt = map.get_left_inner(&i_str);
+    assert!(left_opt.is_some());
+    let l_item = left_opt.unwrap();
+    assert_eq!(l_item.value, i_str);
+    assert_eq!(l_item.hash, r_hash);
+    let right_opt = map.get_right_inner(&i_struct);
+    assert!(right_opt.is_some());
+    let r_item = right_opt.unwrap();
+    assert_eq!(r_item.value, i_struct);
+    assert_eq!(r_item.hash, l_hash);
+    }
     }
     */
 
     /* Should the take methods be needed for the drain iters, these tests will make a return
     #[test]
     fn take_left_tests() {
-        let mut map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-            let take_opt = unsafe { map.take_left(&i_struct) };
-            assert!(take_opt.is_some());
-            let pairing = take_opt.unwrap();
-            assert_eq!(pairing.value, i_str);
-            assert_eq!(pairing.hash, r_hash);
-        }
+    let mut map = construct_default_map();
+    for i in 0..100 {
+    let i_str = i.to_string();
+    let i_struct = TestingStruct::new(i, i.to_string());
+    let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
+    let take_opt = unsafe { map.take_left(&i_struct) };
+    assert!(take_opt.is_some());
+    let pairing = take_opt.unwrap();
+    assert_eq!(pairing.value, i_str);
+    assert_eq!(pairing.hash, r_hash);
+    }
     }
 
     #[test]
     fn take_right_tests() {
-        let mut map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-            let take_opt = unsafe { map.take_right(&i_str) };
-            assert!(take_opt.is_some());
-            let pairing = take_opt.unwrap();
-            assert_eq!(pairing.value, i_struct);
-            assert_eq!(pairing.hash, l_hash);
-        }
+    let mut map = construct_default_map();
+    for i in 0..100 {
+    let i_str = i.to_string();
+    let i_struct = TestingStruct::new(i, i.to_string());
+    let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
+    let take_opt = unsafe { map.take_right(&i_str) };
+    assert!(take_opt.is_some());
+    let pairing = take_opt.unwrap();
+    assert_eq!(pairing.value, i_struct);
+    assert_eq!(pairing.hash, l_hash);
+    }
     }
     */
 

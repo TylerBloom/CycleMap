@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use cycle_map::{OptionalPair, PartialCycleMap};
-    use OptionalPair::*;
     use hashbrown::HashSet;
+    use OptionalPair::*;
 
     #[derive(PartialEq, Eq, Clone, Hash, Debug)]
     struct TestingStruct {
@@ -96,19 +96,13 @@ mod tests {
         let opt = map.remove_via_right(&TestingStruct::from_value(42));
         assert!(opt.is_none());
         let opt = map.remove_via_right(&TestingStruct::from_value(0));
-        assert_eq!(
-            opt,
-            SomeBoth("0".to_string(), TestingStruct::from_value(0))
-        );
+        assert_eq!(opt, SomeBoth("0".to_string(), TestingStruct::from_value(0)));
         // Right remove
         let mut map: PartialCycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.remove_via_left(&"42".to_string());
         assert!(opt.is_none());
         let opt = map.remove_via_left(&"0".to_string());
-        assert_eq!(
-            opt,
-            SomeBoth("0".to_string(), TestingStruct::from_value(0))
-        );
+        assert_eq!(opt, SomeBoth("0".to_string(), TestingStruct::from_value(0)));
     }
 
     #[test]
@@ -531,6 +525,79 @@ mod tests {
         assert!((0..10).all(|i| !map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
         assert!((5..10).all(|i| !map.is_left_paired(&i.to_string())));
         assert!((0..5).all(|i| !map.is_right_paired(&TestingStruct::from_value(i))));
+    }
+
+    #[test]
+    fn drain_tests() {
+        let mut map = construct_unpaired_map();
+        let l_cap = map.capacity_left();
+        let r_cap = map.capacity_right();
+        for i in 0..5 {
+            assert_eq!(
+                map.pair_forced_remove(&i.to_string(), &TestingStruct::from_value(i)),
+                Neither
+            );
+        }
+        let other_map: PartialCycleMap<String, TestingStruct> = map.drain().collect();
+        let mut new_map = construct_unpaired_map();
+        for i in 0..5 {
+            assert_eq!(
+                new_map.pair_forced_remove(&i.to_string(), &TestingStruct::from_value(i)),
+                Neither
+            );
+        }
+        assert_eq!(map.len_left(), 0);
+        assert_eq!(map.len_right(), 0);
+        assert_eq!(map.capacity_left(), l_cap);
+        assert_eq!(map.capacity_right(), r_cap);
+        assert_eq!(other_map, new_map);
+        let mut map = construct_unpaired_map();
+        let l_cap = map.capacity_left();
+        let r_cap = map.capacity_right();
+        for i in 0..5 {
+            assert_eq!(
+                map.pair_forced_remove(&i.to_string(), &TestingStruct::from_value(i)),
+                Neither
+            );
+        }
+        let other_map: PartialCycleMap<String, TestingStruct> = map
+            .drain_filter(|op| {
+                match op.get_right() {
+                    Some(r) => r.value % 2 == 0,
+                    None => true,
+                }
+            })
+            .collect();
+        /*
+        let mut new_map_one = construct_unpaired_map();
+        for i in 0..10 {
+            if i % 2 == 1 {
+                new_map_one.remove_via_right(&TestingStruct::from_value(i));
+            } else if i < 5 {
+                assert_eq!(
+                    new_map_one.pair_forced_remove(&i.to_string(), &TestingStruct::from_value(i)),
+                    Neither
+                );
+            }
+        }
+        let mut new_map_two = construct_unpaired_map();
+        for i in 0..10 {
+            if i % 2 == 0 {
+                new_map_two.remove_via_right(&TestingStruct::from_value(i));
+            } else if i < 5 {
+                assert_eq!(
+                    new_map_two.pair_forced_remove(&i.to_string(), &TestingStruct::from_value(i)),
+                    Neither
+                );
+            }
+        }
+        assert_eq!(map.len_left(), 7);
+        assert_eq!(map.len_right(), 5);
+        assert_eq!(map.capacity_left(), l_cap);
+        assert_eq!(map.capacity_right(), r_cap);
+        assert_eq!(map, new_map_one);
+        assert_eq!(other_map, new_map_two);
+        */
     }
 
     #[test]

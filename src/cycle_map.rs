@@ -6,14 +6,16 @@ use std::{
     marker::PhantomData,
 };
 
+use core::mem;
+
 use hashbrown::{
     hash_map::DefaultHashBuilder,
-    raw::{RawIter, RawTable},
+    raw::{RawDrain, RawIter, RawTable},
 };
 
 use crate::optionals::*;
-use OptionalPair::*;
 use crate::utils::*;
+use OptionalPair::*;
 
 // Contains a value and the hash of the item that the value maps to.
 pub(crate) struct MappingPair<T> {
@@ -33,6 +35,10 @@ pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
     id: u64,
 ) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
     move |x| id == x.id && hash == x.hash
+}
+
+pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
+    move |x| id == x.id
 }
 
 /// A strict one-to-one map.
@@ -529,6 +535,30 @@ where
         }
     }
 
+    /// Returns an iterator that removes and yeilds pairs from the map while leaving the backing
+    /// memory allocated.
+    pub fn drain(&mut self) -> DrainIter<'_, L, R> {
+        self.counter = 0;
+        DrainIter {
+            left_iter: self.left_set.drain(),
+            right_ref: &mut self.right_set,
+        }
+    }
+
+    pub fn drain_filter<F>(&mut self, f: F) -> DrainFilterIter<'_, L, R, F>
+    where
+        F: FnMut(&L, &R) -> bool,
+    {
+        DrainFilterIter {
+            f,
+            inner: DrainFilterInner {
+                left_iter: unsafe { self.left_set.iter() },
+                left_ref: &mut self.left_set,
+                right_ref: &mut self.right_set,
+            }
+        }
+    }
+
     /// Drops all pairs that cause the predicate to return `false` while keeping the backing memory
     /// allocated
     pub fn retain<F>(&mut self, mut f: F)
@@ -814,6 +844,130 @@ where
 }
 
 impl<T> FusedIterator for SingleIter<'_, T> where T: Hash + Eq {}
+
+/// An iterator over the entry pairs of a `CycleMap`.
+#[allow(missing_debug_implementations)]
+pub struct DrainIter<'a, L, R> {
+    left_iter: RawDrain<'a, MappingPair<L>>,
+    right_ref: &'a mut RawTable<MappingPair<R>>,
+}
+
+impl<'a, L, R> Iterator for DrainIter<'a, L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+    type Item = (L, R);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let left = self.left_iter.next()?;
+        let right = self
+            .right_ref
+            .remove_entry(left.hash, just_id(left.id))
+            .unwrap();
+        Some((left.extract(), right.extract()))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.left_iter.size_hint()
+    }
+}
+
+impl<L, R> ExactSizeIterator for DrainIter<'_, L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+    fn len(&self) -> usize {
+        self.left_iter.len()
+    }
+}
+
+impl<L, R> FusedIterator for DrainIter<'_, L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+}
+
+/// A draining iterator over entries of a `CycleMap` which satisfy the predicate `f`.
+#[allow(missing_debug_implementations)]
+pub struct DrainFilterIter<'a, L, R, F>
+where
+    R: Eq,
+    F: FnMut(&L, &R) -> bool,
+{
+    f: F,
+    inner: DrainFilterInner<'a, L, R>,
+}
+
+impl<'a, L, R, F> Drop for DrainFilterIter<'a, L, R, F>
+where
+    R: Eq,
+    F: FnMut(&L, &R) -> bool,
+{
+    fn drop(&mut self) {
+        while let Some(item) = self.next() {
+            let guard = ConsumeAllOnDrop(self);
+            drop(item);
+            mem::forget(guard);
+        }
+    }
+}
+
+pub(super) struct ConsumeAllOnDrop<'a, T: Iterator>(pub(super) &'a mut T);
+
+impl<T: Iterator> Drop for ConsumeAllOnDrop<'_, T> {
+    fn drop(&mut self) {
+        self.0.for_each(drop)
+    }
+}
+
+impl<L, R: Eq, F> Iterator for DrainFilterIter<'_, L, R, F>
+where
+    F: FnMut(&L, &R) -> bool,
+{
+    type Item = (L, R);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next(&mut self.f)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, self.inner.left_iter.size_hint().1)
+    }
+}
+
+impl<L, R: Eq, F> FusedIterator for DrainFilterIter<'_, L, R, F> where F: FnMut(&L, &R) -> bool {}
+
+/// Portions of `DrainFilter` shared with `set::DrainFilter`
+pub(super) struct DrainFilterInner<'a, L, R> {
+    pub(super) left_iter: RawIter<MappingPair<L>>,
+    pub(super) left_ref: &'a mut RawTable<MappingPair<L>>,
+    pub(super) right_ref: &'a mut RawTable<MappingPair<R>>,
+}
+
+impl<L, R: Eq> DrainFilterInner<'_, L, R> 
+{
+    pub(super) fn next<F>(&mut self, f: &mut F) -> Option<(L, R)>
+    where
+        F: FnMut(&L, &R) -> bool,
+    {
+        unsafe {
+            while let Some(left) = self.left_iter.next() {
+                let l_pairing = left.as_ref();
+                let right = self.right_ref.find(l_pairing.hash, just_id(l_pairing.id)).unwrap();
+                if f(&l_pairing.value, &right.as_ref().value) {
+                    let l = self.left_ref.remove(left).extract();
+                    let r = self.right_ref.remove(right).extract();
+                    return Some((l, r));
+                }
+            }
+        }
+        None
+    }
+}
 
 impl<T> MappingPair<T> {
     // Consumes the pair and returns the held `T`

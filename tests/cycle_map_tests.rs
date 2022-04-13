@@ -259,8 +259,30 @@ mod tests {
         assert_eq!(iter.clone().len(), 10);
         assert_eq!(
             iter.cloned().collect::<HashSet<TestingStruct>>(),
-            (0..10).map(|i| TestingStruct::from_value(i)).collect::<HashSet<TestingStruct>>()
+            (0..10)
+                .map(|i| TestingStruct::from_value(i))
+                .collect::<HashSet<TestingStruct>>()
         );
+    }
+
+    #[test]
+    fn drain_tests() {
+        let mut map = construct_default_map();
+        let cap = map.capacity();
+        let other_map: CycleMap<String, TestingStruct> = map.drain().collect();
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.capacity(), cap);
+        assert_eq!(other_map, construct_default_map());
+        let mut map = construct_default_map();
+        let cap = map.capacity();
+        let other_map: CycleMap<String, TestingStruct> =
+            map.drain_filter(|_, t| t.value % 2 == 0).collect();
+        assert_eq!(map.len(), 5);
+        assert_eq!(map.capacity(), cap);
+        assert_eq!(other_map.len(), 5);
+        for (_,t) in other_map.iter() {
+            assert!(t.value % 2 == 0);
+        }
     }
 
     #[test]

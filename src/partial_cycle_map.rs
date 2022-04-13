@@ -6,14 +6,16 @@ use std::{
     marker::PhantomData,
 };
 
+use core::mem;
+
 use hashbrown::{
     hash_map::DefaultHashBuilder,
-    raw::{RawIter, RawTable},
+    raw::{RawDrain, RawIter, RawTable},
 };
 
 use crate::optionals::*;
-use OptionalPair::*;
 use crate::utils::*;
+use OptionalPair::*;
 
 // Contains a value and the hash of the item that the value maps to.
 pub(crate) struct MappingPair<T> {
@@ -217,9 +219,7 @@ where
                         .get_mut(lp_hash, hash_and_id(l_hash, old_id))
                         .unwrap()
                         .hash = None;
-                    SomeRight(
-                        &self.right_set.get(lp_hash, just_id(old_id)).unwrap().value,
-                    )
+                    SomeRight(&self.right_set.get(lp_hash, just_id(old_id)).unwrap().value)
                 }
                 (None, Some(rp_hash)) => {
                     left.hash = Some(r_hash);
@@ -231,9 +231,7 @@ where
                         .get_mut(rp_hash, hash_and_id(r_hash, old_id))
                         .unwrap()
                         .hash = None;
-                    SomeLeft(
-                        &self.left_set.get(rp_hash, just_id(old_id)).unwrap().value,
-                    )
+                    SomeLeft(&self.left_set.get(rp_hash, just_id(old_id)).unwrap().value)
                 }
                 (Some(lp_hash), Some(rp_hash)) => {
                     left.hash = Some(r_hash);
@@ -787,6 +785,32 @@ where
         }
     }
 
+    pub fn drain(&mut self) -> DrainIter<'_, L, R> {
+        DrainIter {
+            left_iter: self.left_set.drain(),
+            right_ref: &mut self.right_set,
+        }
+    }
+
+    pub fn drain_filter<F>(&mut self, f: F) -> DrainFilterIter<'_, L, R, F>
+    where
+        L: fmt::Debug,
+        R: fmt::Debug,
+        F: FnMut(OptionalPair<&L, &R>) -> bool,
+    {
+        unsafe {
+            DrainFilterIter {
+                f,
+                inner: DrainFilterInner {
+                    left_iter: self.left_set.iter(),
+                    right_iter: self.right_set.iter(),
+                    left_ref: &mut self.left_set,
+                    right_ref: &mut self.right_set,
+                },
+            }
+        }
+    }
+
     /// Drops all items that cause the predicate to return `false` while keeping the backing memory
     /// allocated
     pub fn retain<F>(&mut self, mut f: F)
@@ -1003,8 +1027,8 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
     /* Might be used in the future
     /// Returns the raw capacity of the inner sets (same between sets)
     fn raw_capacity(&self) -> usize {
-        // The size of the sets is always equal
-        self.left_set.buckets()
+    // The size of the sets is always equal
+    self.left_set.buckets()
     }
     */
 
@@ -1376,6 +1400,182 @@ where
 
 impl<T> FusedIterator for SingleIter<'_, T> where T: Hash + Eq {}
 
+/// An iterator over the entry pairs of a `PartialCycleMap`.
+#[allow(missing_debug_implementations)]
+pub struct DrainIter<'a, L, R> {
+    left_iter: RawDrain<'a, MappingPair<L>>,
+    right_ref: &'a mut RawTable<MappingPair<R>>,
+}
+
+impl<'a, L, R> Iterator for DrainIter<'a, L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+    type Item = OptionalPair<L, R>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.left_iter.next() {
+            // Not done with the left set yet
+            Some(left) => match left.hash {
+                Some(hash) => {
+                    let right = self
+                        .right_ref
+                        .remove_entry(hash, just_id(left.id))
+                        .unwrap()
+                        .extract();
+                    Some(SomeBoth(left.extract(), right))
+                }
+                None => Some(SomeLeft(left.extract())),
+            },
+            None => match self.right_ref.drain().next() {
+                Some(right) => Some(SomeRight(right.extract())),
+                None => None,
+            },
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.left_iter.size_hint()
+    }
+}
+
+impl<L, R> ExactSizeIterator for DrainIter<'_, L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+    fn len(&self) -> usize {
+        self.left_iter.len()
+    }
+}
+
+impl<L, R> FusedIterator for DrainIter<'_, L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+}
+
+/// A draining iterator over entries of a `CycleMap` which satisfy the predicate `f`.
+#[allow(missing_debug_implementations)]
+pub struct DrainFilterIter<'a, L, R, F>
+where
+    L: fmt::Debug + Eq,
+    R: fmt::Debug + Eq,
+    F: FnMut(OptionalPair<&L, &R>) -> bool,
+{
+    f: F,
+    inner: DrainFilterInner<'a, L, R>,
+}
+
+impl<'a, L, R, F> Drop for DrainFilterIter<'a, L, R, F>
+where
+    L: fmt::Debug + Eq,
+    R: fmt::Debug + Eq,
+    F: FnMut(OptionalPair<&L, &R>) -> bool,
+{
+    fn drop(&mut self) {
+        while let Some(item) = self.next() {
+            println!("Dropping {item:?}");
+            let guard = ConsumeAllOnDrop(self);
+            drop(item);
+            mem::forget(guard);
+        }
+    }
+}
+
+pub(super) struct ConsumeAllOnDrop<'a, T: Iterator>(pub(super) &'a mut T);
+
+impl<T: Iterator> Drop for ConsumeAllOnDrop<'_, T> {
+    fn drop(&mut self) {
+        self.0.for_each(drop)
+    }
+}
+
+impl<L: Eq, R: Eq, F> Iterator for DrainFilterIter<'_, L, R, F>
+where
+    L: fmt::Debug,
+    R: fmt::Debug,
+    F: FnMut(OptionalPair<&L, &R>) -> bool,
+{
+    type Item = OptionalPair<L, R>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next(&mut self.f)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, self.inner.left_iter.size_hint().1)
+    }
+}
+
+impl<L: Eq, R: Eq, F> FusedIterator for DrainFilterIter<'_, L, R, F>
+where
+    L: fmt::Debug,
+    R: fmt::Debug,
+    F: FnMut(OptionalPair<&L, &R>) -> bool,
+{
+}
+
+/// Portions of `DrainFilter` shared with `set::DrainFilter`
+pub(super) struct DrainFilterInner<'a, L, R> {
+    pub(super) left_iter: RawIter<MappingPair<L>>,
+    pub(super) right_iter: RawIter<MappingPair<R>>,
+    pub(super) left_ref: &'a mut RawTable<MappingPair<L>>,
+    pub(super) right_ref: &'a mut RawTable<MappingPair<R>>,
+}
+
+impl<L: Eq, R: Eq> DrainFilterInner<'_, L, R> {
+    pub(super) fn next<F>(&mut self, f: &mut F) -> Option<OptionalPair<L, R>>
+    where
+        L: fmt::Debug,
+        R: fmt::Debug,
+        F: FnMut(OptionalPair<&L, &R>) -> bool,
+    {
+        unsafe {
+            while let Some(left) = self.left_iter.next() {
+                println!("Left iter: in loop");
+                let l_pairing = left.as_ref();
+                println!("Left iter: {:?}", l_pairing.value);
+                match l_pairing.hash {
+                    Some(hash) => {
+                        let right = self.right_ref.find(hash, just_id(l_pairing.id)).unwrap();
+                        if f(SomeBoth(&l_pairing.value, &right.as_ref().value)) {
+                            println!("Right iter: pair pass check.");
+                            let l = self.left_ref.remove(left).extract();
+                            let r = self.right_ref.remove(right).extract();
+                            return Some(SomeBoth(l, r));
+                        }
+                    }
+                    None => {
+                        self.right_iter = self.right_ref.iter();
+                        if f(SomeLeft(&l_pairing.value)) {
+                            println!("Right iter: value pass check.");
+                            let l = self.left_ref.remove(left).extract();
+                            return Some(SomeLeft(l));
+                        }
+                    }
+                }
+            }
+        }
+        unsafe {
+            while let Some(right) = self.right_iter.next() {
+                println!("Right iter: in loop");
+                let r_pairing = right.as_ref();
+                println!("Right iter: {:?}", r_pairing.value);
+                if f(SomeRight(&r_pairing.value)) {
+                    println!("Right iter: value pass check.");
+                    let r = self.right_ref.remove(right).extract();
+                    return Some(SomeRight(r));
+                }
+            }
+        }
+        None
+    }
+}
+
 impl<T> MappingPair<T> {
     // Consumes the pair and returns the held `T`
     pub(crate) fn extract(self) -> T {
@@ -1451,55 +1651,55 @@ mod tests {
     /* Might be needed in the future
     #[test]
     fn get_inner_tests() {
-        let map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-            let left_opt = map.get_left_inner(&i_str);
-            assert!(left_opt.is_some());
-            let l_pairing = left_opt.unwrap();
-            assert_eq!(l_pairing.value, i_str);
-            assert_eq!(l_pairing.hash, r_hash);
-            let right_opt = map.get_right_inner(&i_struct);
-            assert!(right_opt.is_some());
-            let r_pairing = right_opt.unwrap();
-            assert_eq!(r_pairing.value, i_struct);
-            assert_eq!(r_pairing.hash, l_hash);
-        }
+    let map = construct_default_map();
+    for i in 0..100 {
+    let i_str = i.to_string();
+    let i_struct = TestingStruct::new(i, i.to_string());
+    let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
+    let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
+    let left_opt = map.get_left_inner(&i_str);
+    assert!(left_opt.is_some());
+    let l_pairing = left_opt.unwrap();
+    assert_eq!(l_pairing.value, i_str);
+    assert_eq!(l_pairing.hash, r_hash);
+    let right_opt = map.get_right_inner(&i_struct);
+    assert!(right_opt.is_some());
+    let r_pairing = right_opt.unwrap();
+    assert_eq!(r_pairing.value, i_struct);
+    assert_eq!(r_pairing.hash, l_hash);
+    }
     }
     */
 
     /* Should the take methods be needed for the drain iters, these tests will make a return
     #[test]
     fn take_left_tests() {
-        let mut map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-            let take_opt = unsafe { map.take_left(&i_struct) };
-            assert!(take_opt.is_some());
-            let pairing = take_opt.unwrap();
-            assert_eq!(pairing.value, i_str);
-            assert_eq!(pairing.hash, r_hash);
-        }
+    let mut map = construct_default_map();
+    for i in 0..100 {
+    let i_str = i.to_string();
+    let i_struct = TestingStruct::new(i, i.to_string());
+    let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
+    let take_opt = unsafe { map.take_left(&i_struct) };
+    assert!(take_opt.is_some());
+    let pairing = take_opt.unwrap();
+    assert_eq!(pairing.value, i_str);
+    assert_eq!(pairing.hash, r_hash);
+    }
     }
 
     #[test]
     fn take_right_tests() {
-        let mut map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-            let take_opt = unsafe { map.take_right(&i_str) };
-            assert!(take_opt.is_some());
-            let pairing = take_opt.unwrap();
-            assert_eq!(pairing.value, i_struct);
-            assert_eq!(pairing.hash, l_hash);
-        }
+    let mut map = construct_default_map();
+    for i in 0..100 {
+    let i_str = i.to_string();
+    let i_struct = TestingStruct::new(i, i.to_string());
+    let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
+    let take_opt = unsafe { map.take_right(&i_str) };
+    assert!(take_opt.is_some());
+    let pairing = take_opt.unwrap();
+    assert_eq!(pairing.value, i_struct);
+    assert_eq!(pairing.hash, l_hash);
+    }
     }
     */
 

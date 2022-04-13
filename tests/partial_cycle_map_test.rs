@@ -564,14 +564,13 @@ mod tests {
             .drain_filter(|op| {
                 match op.get_right() {
                     Some(r) => r.value % 2 == 0,
-                    None => true,
+                    None => false,
                 }
             })
             .collect();
-        /*
         let mut new_map_one = construct_unpaired_map();
         for i in 0..10 {
-            if i % 2 == 1 {
+            if i % 2 == 0 {
                 new_map_one.remove_via_right(&TestingStruct::from_value(i));
             } else if i < 5 {
                 assert_eq!(
@@ -582,7 +581,7 @@ mod tests {
         }
         let mut new_map_two = construct_unpaired_map();
         for i in 0..10 {
-            if i % 2 == 0 {
+            if i % 2 == 1 {
                 new_map_two.remove_via_right(&TestingStruct::from_value(i));
             } else if i < 5 {
                 assert_eq!(
@@ -597,7 +596,6 @@ mod tests {
         assert_eq!(map.capacity_right(), r_cap);
         assert_eq!(map, new_map_one);
         assert_eq!(other_map, new_map_two);
-        */
     }
 
     #[test]

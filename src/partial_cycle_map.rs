@@ -806,6 +806,7 @@ where
                     right_iter: self.right_set.iter(),
                     left_ref: &mut self.left_set,
                     right_ref: &mut self.right_set,
+                    reset_right_iter: true,
                 },
             }
         }
@@ -1477,7 +1478,6 @@ where
 {
     fn drop(&mut self) {
         while let Some(item) = self.next() {
-            println!("Dropping {item:?}");
             let guard = ConsumeAllOnDrop(self);
             drop(item);
             mem::forget(guard);
@@ -1525,6 +1525,7 @@ pub(super) struct DrainFilterInner<'a, L, R> {
     pub(super) right_iter: RawIter<MappingPair<R>>,
     pub(super) left_ref: &'a mut RawTable<MappingPair<L>>,
     pub(super) right_ref: &'a mut RawTable<MappingPair<R>>,
+    pub(super) reset_right_iter: bool,
 }
 
 impl<L: Eq, R: Eq> DrainFilterInner<'_, L, R> {
@@ -1534,42 +1535,34 @@ impl<L: Eq, R: Eq> DrainFilterInner<'_, L, R> {
         R: fmt::Debug,
         F: FnMut(OptionalPair<&L, &R>) -> bool,
     {
-        unsafe {
-            while let Some(left) = self.left_iter.next() {
-                println!("Left iter: in loop");
-                let l_pairing = left.as_ref();
-                println!("Left iter: {:?}", l_pairing.value);
-                match l_pairing.hash {
-                    Some(hash) => {
-                        let right = self.right_ref.find(hash, just_id(l_pairing.id)).unwrap();
-                        if f(SomeBoth(&l_pairing.value, &right.as_ref().value)) {
-                            println!("Right iter: pair pass check.");
-                            let l = self.left_ref.remove(left).extract();
-                            let r = self.right_ref.remove(right).extract();
-                            return Some(SomeBoth(l, r));
-                        }
+        while let Some(left) = self.left_iter.next() {
+            let l_pairing = unsafe { left.as_ref() };
+            match l_pairing.hash {
+                Some(hash) => {
+                    let right = self.right_ref.find(hash, just_id(l_pairing.id)).unwrap();
+                    if unsafe { f(SomeBoth(&l_pairing.value, &right.as_ref().value)) } {
+                        let l = unsafe { self.left_ref.remove(left).extract() };
+                        let r = unsafe { self.right_ref.remove(right).extract() };
+                        return Some(SomeBoth(l, r));
                     }
-                    None => {
-                        self.right_iter = self.right_ref.iter();
-                        if f(SomeLeft(&l_pairing.value)) {
-                            println!("Right iter: value pass check.");
-                            let l = self.left_ref.remove(left).extract();
-                            return Some(SomeLeft(l));
-                        }
+                }
+                None => {
+                    if f(SomeLeft(&l_pairing.value)) {
+                        let l = unsafe { self.left_ref.remove(left).extract() };
+                        return Some(SomeLeft(l));
                     }
                 }
             }
         }
-        unsafe {
-            while let Some(right) = self.right_iter.next() {
-                println!("Right iter: in loop");
-                let r_pairing = right.as_ref();
-                println!("Right iter: {:?}", r_pairing.value);
-                if f(SomeRight(&r_pairing.value)) {
-                    println!("Right iter: value pass check.");
-                    let r = self.right_ref.remove(right).extract();
-                    return Some(SomeRight(r));
-                }
+        if self.reset_right_iter {
+            self.right_iter = unsafe { self.right_ref.iter() };
+            self.reset_right_iter = false;
+        }
+        while let Some(right) = self.right_iter.next() {
+            let r_pairing = unsafe { right.as_ref() };
+            if f(SomeRight(&r_pairing.value)) {
+                let r = unsafe { self.right_ref.remove(right).extract() };
+                return Some(SomeRight(r));
             }
         }
         None

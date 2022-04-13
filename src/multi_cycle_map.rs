@@ -2,19 +2,18 @@ use std::{
     default::Default,
     fmt,
     hash::{BuildHasher, Hash},
-    iter::{FusedIterator, Map},
+    iter::FusedIterator,
+    marker::PhantomData,
 };
 
 use hashbrown::{
     hash_map::DefaultHashBuilder,
     hash_set,
-    raw::{Bucket, RawIter, RawTable},
+    raw::{RawIter, RawTable},
     HashSet,
 };
 
-use crate::optionals::*;
 use crate::utils::*;
-use OptionalPair::*;
 
 pub(crate) fn equivalent_key<T: PartialEq<Q>, Q: PartialEq + ?Sized>(
     k: &Q,
@@ -143,9 +142,9 @@ where
     pub fn insert_left(&mut self, left: L, right: &R) -> Option<L> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
         let right_item = self.right_set.get_mut(r_hash, equivalent_key(right))?;
-        let digest = self.remove_via_left(&left);
         let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
         right_item.pairs.insert((l_hash, self.counter));
+        let digest = self.remove_via_left(&left);
         let left_item = LeftItem {
             value: left,
             hash: r_hash,
@@ -297,7 +296,7 @@ where
                     .extract()
             })
             .collect();
-        None
+        Some((left_vec, right_item.extract()))
     }
 
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
@@ -318,8 +317,14 @@ where
 
     /// Returns an optional iterator over the items that the given item is paired with.
     /// `None` is returned if the given item can't be found.
-    pub fn get_left_iter(&self, item: &R) -> Option<&L> {
-        todo!()
+    pub fn get_left_iter(&self, item: &R) -> Option<PairIter<'_, L, R, S>> {
+        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let right_item: &RightItem<R> = self.right_set.get(r_hash, equivalent_key(item))?;
+        Some( PairIter {
+            iter: right_item.pairs.iter(),
+            map_ref: self,
+            marker: PhantomData,
+        } )
     }
 
     /// Gets a reference to an item in the right set using an item in the left set.
@@ -342,24 +347,26 @@ where
     let right_item = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
     Some((&left_item.value, &right_item.value))
     }
-    */
 
     #[inline]
     fn get_left_inner(&self, item: &L) -> Option<&LeftItem<L>> {
         let hash = make_hash::<L, S>(&self.hash_builder, item);
         self.left_set.get(hash, equivalent_key(item))
     }
+    */
 
     #[inline]
     fn get_left_inner_with_hash(&self, item: &L, hash: u64) -> Option<&LeftItem<L>> {
         self.left_set.get(hash, equivalent_key(item))
     }
 
+    /* Might need again in the future
     #[inline]
     fn get_right_inner(&self, item: &R) -> Option<&RightItem<R>> {
         let hash = make_hash::<R, S>(&self.hash_builder, item);
         self.right_set.get(hash, equivalent_key(item))
     }
+    */
 
     #[inline]
     fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&RightItem<R>> {
@@ -393,16 +400,18 @@ where
     }
 
     /// Returns an iterator over elements in the left set
-    pub fn iter_left(&self) -> LeftIter<L> {
+    pub fn iter_left(&self) -> LeftIter<'_, L> {
         LeftIter {
-            iter: unsafe { self.left_set.iter() },
+            left_iter: unsafe { self.left_set.iter() },
+            marker: PhantomData,
         }
     }
 
     /// Returns an iterator over elements in the right set
-    pub fn iter_right(&self) -> RightIter<R> {
+    pub fn iter_right(&self) -> RightIter<'_, R> {
         RightIter {
-            iter: unsafe { self.right_set.iter() },
+            right_iter: unsafe { self.right_set.iter() },
+            marker: PhantomData,
         }
     }
 
@@ -513,13 +522,9 @@ where
         if self.len_left() != other.len_left() && self.len_right() != other.len_right() {
             return false;
         }
-        self.iter().all(|op| match op {
-            SomeLeft(l) => other.get_right(l).is_none(),
-            SomeRight(r) => other.get_left(r).is_none(),
-            SomeBoth(l, r) => other.are_mapped(l, r),
-            _ => {
-                unreachable!("There has to be at least one item.")
-            }
+        self.iter().all(|(l_opt, r)| match l_opt {
+            Some(l) => other.are_mapped(l, r),
+            None => !other.is_right_paired(r),
         })
     }
 }
@@ -690,7 +695,7 @@ where
                 if r_ref.pairs.len() == 0 {
                     return Some((None, &r_ref.value));
                 } else {
-                    let iter = r_ref.pairs.iter();
+                    let mut iter = r_ref.pairs.iter();
                     let pair = iter.next().unwrap();
                     self.left_iter = Some(iter);
                     let left = self
@@ -838,7 +843,7 @@ where
     type Item = &'a R;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(item) = self.right_iter.next().map(|r| unsafe { &r.as_ref() }) {
+        while let Some(item) = self.right_iter.next().map(|r| unsafe { r.as_ref() }) {
             if item.pairs.len() == 0 {
                 return Some(&item.value);
             }
@@ -871,72 +876,65 @@ where
 }
 
 /// An iterator over the elements of an inner set of a `MultiCycleMap`.
-pub struct LeftIter<I> {
-    iter: I,
+pub struct LeftIter<'a, L> {
+    left_iter: RawIter<LeftItem<L>>,
+    marker: PhantomData<&'a L>,
 }
 
-impl<I> Clone for LeftIter<I>
-where
-    I: Clone,
-{
+impl<L> Clone for LeftIter<'_, L> {
     fn clone(&self) -> Self {
         Self {
-            iter: self.iter.clone(),
+            left_iter: self.left_iter.clone(),
+            marker: PhantomData,
         }
     }
 }
 
-impl<I> fmt::Debug for LeftIter<I>
+impl<L> fmt::Debug for LeftIter<'_, L>
 where
-    I: Iterator + Clone,
-    <I as Iterator>::Item: fmt::Debug,
+    L: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.clone()).finish()
     }
 }
 
-impl<'a, I> Iterator for LeftIter<I>
-where
-    I: Iterator,
-{
-    type Item = I::Item;
+impl<'a, L> Iterator for LeftIter<'a, L> {
+    type Item = &'a L;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
+        self.left_iter.next().map(|b| unsafe { &b.as_ref().value })
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.iter.size_hint()
+        self.left_iter.size_hint()
     }
 }
 
-impl<'a, I> ExactSizeIterator for LeftIter<I>
-where
-    I: ExactSizeIterator,
-{
+impl<L> ExactSizeIterator for LeftIter<'_, L> {
     fn len(&self) -> usize {
-        self.iter.len()
+        self.left_iter.len()
     }
 }
 
-impl<I> FusedIterator for LeftIter<I> where I: FusedIterator {}
+impl<L> FusedIterator for LeftIter<'_, L> {}
 
 /// An iterator over the elements of an inner set of a `MultiCycleMap`.
-pub struct RightIter<'_, R> {
+pub struct RightIter<'a, R> {
     right_iter: RawIter<RightItem<R>>,
+    marker: PhantomData<&'a R>,
 }
 
-impl<R> Clone for RightIter<R> {
+impl<R> Clone for RightIter<'_, R> {
     fn clone(&self) -> Self {
         Self {
             right_iter: self.right_iter.clone(),
+            marker: PhantomData,
         }
     }
 }
 
 impl<R> fmt::Debug for RightIter<'_, R>
 where
-    Self: Clone,
     R: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -944,31 +942,82 @@ where
     }
 }
 
-impl<'a, R> Iterator for RightIter<'a, R>
-{
+impl<'a, R> Iterator for RightIter<'a, R> {
     type Item = &'a R;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(right) = self.iter.next() {
-            unsafe { Some(&right.as_ref().value) }
+        self.right_iter.next().map(|b| unsafe { &b.as_ref().value })
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.right_iter.size_hint()
+    }
+}
+
+impl<R> ExactSizeIterator for RightIter<'_, R> {
+    fn len(&self) -> usize {
+        self.right_iter.len()
+    }
+}
+
+impl<R> FusedIterator for RightIter<'_, R> {}
+
+/// An iterator over the elements of an inner set of a `MultiCycleMap`.
+pub struct PairIter<'a, L, R, S> {
+    iter: hash_set::Iter<'a, (u64, u64)>,
+    map_ref: &'a MultiCycleMap<L, R, S>,
+    marker: PhantomData<&'a L>,
+}
+
+impl<L, R, S> Clone for PairIter<'_, L, R, S> {
+    fn clone(&self) -> Self {
+        Self {
+            iter: self.iter.clone(),
+            map_ref: self.map_ref.clone(),
+            marker: PhantomData,
         }
-        None
+    }
+}
+
+impl<L, R, S> fmt::Debug for PairIter<'_, L, R, S>
+where
+    L: Eq + fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a, L, R, S> Iterator for PairIter<'a, L, R, S>
+where
+    L: Eq,
+{
+    type Item = &'a L;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|(hash, id)| {
+            &self
+                .map_ref
+                .left_set
+                .get(*hash, left_just_id(*id))
+                .unwrap()
+                .value
+        })
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
     }
 }
 
-impl<'a, I> ExactSizeIterator for RightIter<I>
+impl<L, R, S> ExactSizeIterator for PairIter<'_, L, R, S>
 where
-    I: ExactSizeIterator,
+    L: Eq,
 {
     fn len(&self) -> usize {
         self.iter.len()
     }
 }
 
-impl<I> FusedIterator for RightIter<I> where I: FusedIterator {}
+impl<L: Eq, R, S> FusedIterator for PairIter<'_, L, R, S> {}
 
 impl<T> LeftItem<T> {
     // Consumes the pair and returns the held `T`

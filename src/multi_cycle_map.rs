@@ -320,11 +320,11 @@ where
     pub fn get_left_iter(&self, item: &R) -> Option<PairIter<'_, L, R, S>> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_item: &RightItem<R> = self.right_set.get(r_hash, equivalent_key(item))?;
-        Some( PairIter {
+        Some(PairIter {
             iter: right_item.pairs.iter(),
             map_ref: self,
             marker: PhantomData,
-        } )
+        })
     }
 
     /// Gets a reference to an item in the right set using an item in the left set.
@@ -514,8 +514,8 @@ where
 
 impl<L, R, S> PartialEq<MultiCycleMap<L, R, S>> for MultiCycleMap<L, R, S>
 where
-    L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -531,8 +531,8 @@ where
 
 impl<L, R, S> Eq for MultiCycleMap<L, R, S>
 where
-    L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
 }
@@ -1110,92 +1110,5 @@ impl<T: fmt::Debug> fmt::Debug for RightItem<T> {
             "RightItem {{ value: {:?}, id: {}, pairs: {:?} }}",
             self.value, self.id, self.pairs
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::hash::Hash;
-
-    use super::MultiCycleMap;
-
-    #[derive(PartialEq, Eq, Hash, Debug)]
-    struct TestingStruct {
-        pub(crate) value: u64,
-        pub(crate) data: String,
-    }
-
-    fn construct_default_map() -> MultiCycleMap<String, TestingStruct> {
-        (0..100)
-            .map(|i| (i.to_string(), TestingStruct::new(i, i.to_string())))
-            .collect()
-    }
-
-    #[test]
-    fn default_construction_test() {
-        let map = construct_default_map();
-        assert_eq!(map.len_left(), 100);
-        assert_eq!(map.len_right(), 100);
-    }
-
-    /* Might be needed in the future
-    #[test]
-    fn get_inner_tests() {
-    let map = construct_default_map();
-    for i in 0..100 {
-    let i_str = i.to_string();
-    let i_struct = TestingStruct::new(i, i.to_string());
-    let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-    let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-    let left_opt = map.get_left_inner(&i_str);
-    assert!(left_opt.is_some());
-    let l_item = left_opt.unwrap();
-    assert_eq!(l_item.value, i_str);
-    assert_eq!(l_item.hash, r_hash);
-    let right_opt = map.get_right_inner(&i_struct);
-    assert!(right_opt.is_some());
-    let r_item = right_opt.unwrap();
-    assert_eq!(r_item.value, i_struct);
-    assert_eq!(r_item.hash, l_hash);
-    }
-    }
-    */
-
-    /* Should the take methods be needed for the drain iters, these tests will make a return
-    #[test]
-    fn take_left_tests() {
-    let mut map = construct_default_map();
-    for i in 0..100 {
-    let i_str = i.to_string();
-    let i_struct = TestingStruct::new(i, i.to_string());
-    let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-    let take_opt = unsafe { map.take_left(&i_struct) };
-    assert!(take_opt.is_some());
-    let pairing = take_opt.unwrap();
-    assert_eq!(pairing.value, i_str);
-    assert_eq!(pairing.hash, r_hash);
-    }
-    }
-
-    #[test]
-    fn take_right_tests() {
-    let mut map = construct_default_map();
-    for i in 0..100 {
-    let i_str = i.to_string();
-    let i_struct = TestingStruct::new(i, i.to_string());
-    let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-    let take_opt = unsafe { map.take_right(&i_str) };
-    assert!(take_opt.is_some());
-    let pairing = take_opt.unwrap();
-    assert_eq!(pairing.value, i_struct);
-    assert_eq!(pairing.hash, l_hash);
-    }
-    }
-    */
-
-    impl TestingStruct {
-        pub(crate) fn new(value: u64, data: String) -> Self {
-            Self { value, data }
-        }
     }
 }

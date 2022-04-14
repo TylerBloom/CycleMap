@@ -545,6 +545,8 @@ where
         }
     }
 
+    /// Returns an iterator that removes and yields all pairs that evaluate to `true` in the given
+    /// closure while keeping the backing memory allocated.
     pub fn drain_filter<F>(&mut self, f: F) -> DrainFilterIter<'_, L, R, F>
     where
         F: FnMut(&L, &R) -> bool,
@@ -555,7 +557,7 @@ where
                 left_iter: unsafe { self.left_set.iter() },
                 left_ref: &mut self.left_set,
                 right_ref: &mut self.right_set,
-            }
+            },
         }
     }
 
@@ -676,8 +678,8 @@ where
 
 impl<L, R, S> PartialEq<CycleMap<L, R, S>> for CycleMap<L, R, S>
 where
-    L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -690,8 +692,8 @@ where
 
 impl<L, R, S> Eq for CycleMap<L, R, S>
 where
-    L: Hash + Eq + fmt::Debug,
-    R: Hash + Eq + fmt::Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
 }
@@ -948,8 +950,7 @@ pub(super) struct DrainFilterInner<'a, L, R> {
     pub(super) right_ref: &'a mut RawTable<MappingPair<R>>,
 }
 
-impl<L, R: Eq> DrainFilterInner<'_, L, R> 
-{
+impl<L, R: Eq> DrainFilterInner<'_, L, R> {
     pub(super) fn next<F>(&mut self, f: &mut F) -> Option<(L, R)>
     where
         F: FnMut(&L, &R) -> bool,
@@ -957,7 +958,10 @@ impl<L, R: Eq> DrainFilterInner<'_, L, R>
         unsafe {
             while let Some(left) = self.left_iter.next() {
                 let l_pairing = left.as_ref();
-                let right = self.right_ref.find(l_pairing.hash, just_id(l_pairing.id)).unwrap();
+                let right = self
+                    .right_ref
+                    .find(l_pairing.hash, just_id(l_pairing.id))
+                    .unwrap();
                 if f(&l_pairing.value, &right.as_ref().value) {
                     let l = self.left_ref.remove(left).extract();
                     let r = self.right_ref.remove(right).extract();
@@ -1013,91 +1017,5 @@ impl<T: fmt::Debug> fmt::Debug for MappingPair<T> {
             "MappingPair {{ value: {:?}, hash: {}, id: {} }}",
             self.value, self.hash, self.id
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::hash::Hash;
-
-    use super::CycleMap;
-
-    #[derive(PartialEq, Eq, Hash, Debug)]
-    struct TestingStruct {
-        pub(crate) value: u64,
-        pub(crate) data: String,
-    }
-
-    fn construct_default_map() -> CycleMap<String, TestingStruct> {
-        (0..100)
-            .map(|i| (i.to_string(), TestingStruct::new(i, i.to_string())))
-            .collect()
-    }
-
-    #[test]
-    fn default_construction_test() {
-        let map = construct_default_map();
-        assert_eq!(map.len(), 100);
-    }
-
-    /* Might be needed in the future
-    #[test]
-    fn get_inner_tests() {
-        let map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-            let left_opt = map.get_left_inner(&i_str);
-            assert!(left_opt.is_some());
-            let l_pairing = left_opt.unwrap();
-            assert_eq!(l_pairing.value, i_str);
-            assert_eq!(l_pairing.hash, r_hash);
-            let right_opt = map.get_right_inner(&i_struct);
-            assert!(right_opt.is_some());
-            let r_pairing = right_opt.unwrap();
-            assert_eq!(r_pairing.value, i_struct);
-            assert_eq!(r_pairing.hash, l_hash);
-        }
-    }
-    */
-
-    /* Should the take methods be needed for the drain iters, these tests will make a return
-    #[test]
-    fn take_left_tests() {
-        let mut map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let r_hash = make_hash::<TestingStruct, DefaultHashBuilder>(map.hasher(), &i_struct);
-            let take_opt = unsafe { map.take_left(&i_struct) };
-            assert!(take_opt.is_some());
-            let pairing = take_opt.unwrap();
-            assert_eq!(pairing.value, i_str);
-            assert_eq!(pairing.hash, r_hash);
-        }
-    }
-
-    #[test]
-    fn take_right_tests() {
-        let mut map = construct_default_map();
-        for i in 0..100 {
-            let i_str = i.to_string();
-            let i_struct = TestingStruct::new(i, i.to_string());
-            let l_hash = make_hash::<String, DefaultHashBuilder>(map.hasher(), &i_str);
-            let take_opt = unsafe { map.take_right(&i_str) };
-            assert!(take_opt.is_some());
-            let pairing = take_opt.unwrap();
-            assert_eq!(pairing.value, i_struct);
-            assert_eq!(pairing.hash, l_hash);
-        }
-    }
-    */
-
-    impl TestingStruct {
-        pub(crate) fn new(value: u64, data: String) -> Self {
-            Self { value, data }
-        }
     }
 }

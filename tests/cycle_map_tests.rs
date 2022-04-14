@@ -223,7 +223,7 @@ mod tests {
         map.retain(|x, _| x % 2 == 0);
         assert_eq!(map.len(), 50);
         for (val, s) in map.iter() {
-            assert_eq!(val % 2, 1);
+            assert_eq!(val % 2, 0);
             println!("{val}, {s}");
         }
     }
@@ -267,21 +267,18 @@ mod tests {
 
     #[test]
     fn drain_tests() {
-        let mut map = construct_default_map();
+        let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
         let cap = map.capacity();
-        let other_map: CycleMap<String, TestingStruct> = map.drain().collect();
+        let other_map: CycleMap<u64, String> = map.drain().collect();
         assert_eq!(map.len(), 0);
         assert_eq!(map.capacity(), cap);
-        assert_eq!(other_map, construct_default_map());
-        let mut map = construct_default_map();
-        let cap = map.capacity();
-        let other_map: CycleMap<String, TestingStruct> =
-            map.drain_filter(|_, t| t.value % 2 == 0).collect();
-        assert_eq!(map.len(), 5);
-        assert_eq!(map.capacity(), cap);
-        assert_eq!(other_map.len(), 5);
-        for (_, t) in other_map.iter() {
-            assert!(t.value % 2 == 0);
+        assert_eq!(other_map.len(), 100);
+        let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
+        let other_map: CycleMap<u64, String> = map.drain_filter(|l, _| l % 2 == 0).collect();
+        assert_eq!(map.len(), 50);
+        assert_eq!(other_map.len(), 50);
+        for (l, _) in other_map.iter() {
+            assert!(l % 2 == 0);
         }
     }
 
@@ -302,7 +299,7 @@ mod tests {
     fn misc_tests() {
         let map = construct_default_map();
         let _hasher = map.hasher();
-        assert!(!map.are_mapped(&"0".to_string(), &TestingStruct::from_value(1)));
+        assert!(!map.are_paired(&"0".to_string(), &TestingStruct::from_value(1)));
     }
 
     impl TestingStruct {

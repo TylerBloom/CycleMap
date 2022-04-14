@@ -74,7 +74,7 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// assert_eq!(converter.remove_via_left(&"three".to_string()), Some(("three".to_string(), 3)));
 ///
 /// // Remove all pairs with an odd right item
-/// converter.retain(|_,i| i % 2 == 0);
+/// converter.retain(|_,i| i % 2 == 1);
 /// assert!(converter.contains_right(&2));
 ///
 /// ```
@@ -569,7 +569,7 @@ where
     {
         let mut to_drop: Vec<(u64, u64, u64)> = Vec::with_capacity(self.left_set.len());
         for (left, right) in self.iter() {
-            if !f(left, right) {
+            if f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                 let r_hash = make_hash::<R, S>(&self.hash_builder, right);
                 let id = self.get_left_inner(left).unwrap().id;

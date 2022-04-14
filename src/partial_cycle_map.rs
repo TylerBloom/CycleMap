@@ -823,7 +823,7 @@ where
         let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
             Vec::with_capacity(self.left_set.len());
         for op in self.iter() {
-            if !f(&op) {
+            if f(&op) {
                 let (left, right): (Option<&L>, Option<&R>) = op.into();
                 let l_hash: Option<u64> = if left.is_some() {
                     Some(make_hash::<L, S>(&self.hash_builder, left.unwrap()))
@@ -869,7 +869,7 @@ where
     {
         let mut to_drop: Vec<(u64, u64, u64)> = Vec::with_capacity(self.left_set.len());
         for (left, right) in self.iter_mapped() {
-            if !f(left, right) {
+            if f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                 let r_hash = make_hash::<R, S>(&self.hash_builder, right);
                 let id = self.get_left_inner(left).unwrap().id;
@@ -890,7 +890,7 @@ where
         let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
             Vec::with_capacity(self.left_set.len());
         for op in self.iter_unmapped() {
-            if !f(&op) {
+            if f(&op) {
                 match op {
                     SomeLeft(left) => {
                         let l_hash = make_hash::<L, S>(&self.hash_builder, left);

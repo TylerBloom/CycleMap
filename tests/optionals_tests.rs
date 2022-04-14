@@ -45,20 +45,14 @@ mod tests {
             sl.clone().map_left(|l| l.to_string()),
             SomeLeft(String::from("42"))
         );
-        assert_eq!(
-            sr.clone().map_left(|l| l.to_string()),
-            SomeRight(84)
-        );
+        assert_eq!(sr.clone().map_left(|l| l.to_string()), SomeRight(84));
         assert_eq!(
             sb.clone().map_left(|l| l.to_string()),
             SomeBoth(String::from("42"), 84)
         );
         // Map right tests
         assert_eq!(no.clone().map_right(|r| r.to_string()), Neither);
-        assert_eq!(
-            sl.clone().map_right(|r| r.to_string()),
-            SomeLeft(42)
-        );
+        assert_eq!(sl.clone().map_right(|r| r.to_string()), SomeLeft(42));
         assert_eq!(
             sr.clone().map_right(|r| r.to_string()),
             SomeRight(String::from("84"))

@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use cycle_map::{OptionalPair, MultiCycleMap};
+    use cycle_map::MultiCycleMap;
     use hashbrown::HashSet;
-    use OptionalPair::*;
 
     #[derive(PartialEq, Eq, Clone, Hash, Debug)]
     struct TestingStruct {
@@ -75,13 +74,19 @@ mod tests {
         let opt = map.remove(&"42".to_string(), &TestingStruct::from_value(42));
         assert!(opt.is_none());
         let opt = map.remove(&"0".to_string(), &TestingStruct::from_value(0));
-        assert_eq!(opt, Some((vec!["0".to_string()], TestingStruct::from_value(0))));
+        assert_eq!(
+            opt,
+            Some((vec!["0".to_string()], TestingStruct::from_value(0)))
+        );
         // Left remove
         let mut map: MultiCycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.remove_via_right(&TestingStruct::from_value(42));
         assert!(opt.is_none());
         let opt = map.remove_via_right(&TestingStruct::from_value(0));
-        assert_eq!(opt, Some((vec!["0".to_string()], TestingStruct::from_value(0))));
+        assert_eq!(
+            opt,
+            Some((vec!["0".to_string()], TestingStruct::from_value(0)))
+        );
         // Right remove
         let mut map: MultiCycleMap<String, TestingStruct> = construct_default_map();
         let opt = map.remove_via_left(&"42".to_string());
@@ -94,64 +99,42 @@ mod tests {
     fn retain_test() {
         let mut map: MultiCycleMap<u64, String> = MultiCycleMap::with_capacity(100);
         for i in 0..100 {
-            if i < 34 {
+            if i < 50 {
                 let opt = map.insert(i, i.to_string());
                 assert_eq!(opt, (None, None));
-            } else if i < 67 {
-                let opt = map.insert_left(i, &i.to_string());
-                assert_eq!(opt, None);
             } else {
                 let opt = map.insert_right(i.to_string());
                 assert_eq!(opt, None);
             }
         }
-        assert_eq!(map.len_left(), 67);
-        assert_eq!(map.len_right(), 67);
-        map.retain(|opt,_| {
-            match opt {
-                Some(x) => x % 2 == 0,
-                None => true,
-            }
-        });
-        assert_eq!(map.len_left(), 34);
+        assert_eq!(map.len_left(), 50);
+        assert_eq!(map.len_right(), 100);
+        map.retain(|opt, _| opt.is_none() );
+        assert_eq!(map.len_left(), 50);
         assert_eq!(map.len_right(), 50);
-        for opt in map.iter() {
-            match opt {
-                SomeLeft(val) | SomeBoth(val, _) => {
-                    assert_eq!(val % 2, 0);
-                }
-                _ => {}
-            }
-        }
     }
 
     #[test]
     fn retain_mapped_test() {
         let mut map: MultiCycleMap<u64, String> = MultiCycleMap::with_capacity(100);
         for i in 0..100 {
-            if i < 34 {
+            if i < 50 {
                 let opt = map.insert(i, i.to_string());
-                assert_eq!(opt, (Neither, Neither));
-            } else if i < 67 {
-                let opt = map.insert_left(i);
-                assert_eq!(opt, Neither);
+                assert_eq!(opt, (None, None));
             } else {
                 let opt = map.insert_right(i.to_string());
-                assert_eq!(opt, Neither);
+                assert_eq!(opt, None);
             }
         }
-        assert_eq!(map.len_left(), 67);
-        assert_eq!(map.len_right(), 67);
-        map.retain_mapped(|l, _| *l % 2 == 0);
         assert_eq!(map.len_left(), 50);
-        assert_eq!(map.len_right(), 50);
+        assert_eq!(map.len_right(), 100);
+        map.retain_mapped(|l, _| *l % 2 == 0);
+        assert_eq!(map.len_left(), 25);
+        assert_eq!(map.len_right(), 75);
         for op in map.iter() {
             println!("{op:?}");
-            match op {
-                SomeBoth(val, _) => {
-                    assert_eq!(val % 2, 0);
-                }
-                _ => {}
+            if let Some(x) = op.0 {
+                assert_eq!(x % 2, 1);
             }
         }
     }
@@ -160,37 +143,19 @@ mod tests {
     fn retain_unmapped_test() {
         let mut map: MultiCycleMap<u64, String> = MultiCycleMap::with_capacity(100);
         for i in 0..100 {
-            if i < 34 {
+            if i < 50 {
                 let opt = map.insert(i, i.to_string());
-                assert_eq!(opt, (Neither, Neither));
-            } else if i < 67 {
-                let opt = map.insert_left(i);
-                assert_eq!(opt, Neither);
+                assert_eq!(opt, (None, None));
             } else {
                 let opt = map.insert_right(i.to_string());
-                assert_eq!(opt, Neither);
+                assert_eq!(opt, None);
             }
         }
-        assert_eq!(map.len_left(), 67);
-        assert_eq!(map.len_right(), 67);
-        map.retain_unmapped(|op| {
-            if let Some(l) = op.get_left() {
-                *l % 2 == 0
-            } else {
-                true
-            }
-        });
-        assert_eq!(map.len_left(), 51);
-        assert_eq!(map.len_right(), 67);
-        for op in map.iter() {
-            println!("{op:?}");
-            match op {
-                SomeLeft(val) => {
-                    assert_eq!(val % 2, 0);
-                }
-                _ => {}
-            }
-        }
+        assert_eq!(map.len_left(), 50);
+        assert_eq!(map.len_right(), 100);
+        map.retain_unmapped(|val| val.parse::<u64>().unwrap() % 2 == 0);
+        assert_eq!(map.len_left(), 50);
+        assert_eq!(map.len_right(), 75);
     }
 
     #[test]
@@ -201,11 +166,6 @@ mod tests {
         println!("{iter:?}");
         assert_eq!(iter.len(), 10);
         assert_eq!(iter.clone().len(), 10);
-        assert_eq!(
-            iter.map(|op| op.cloned())
-                .collect::<MultiCycleMap<String, TestingStruct>>(),
-            map
-        );
         // Left iter
         let map = construct_default_map();
         let iter = map.iter_left();
@@ -243,7 +203,9 @@ mod tests {
                 .collect::<MultiCycleMap<String, TestingStruct>>(),
             map
         );
-        let map = construct_unpaired_map();
+        let map: MultiCycleMap<String, TestingStruct> = (0..10)
+            .map(|i| (None, TestingStruct::from_value(i)))
+            .collect();
         let iter = map.iter_mapped();
         println!("{iter:?}");
         assert_eq!(iter.len(), 0);
@@ -258,42 +220,43 @@ mod tests {
     #[test]
     fn unmapped_iter_tests() {
         // Unmapped iter
-        let map = construct_unpaired_map();
+        let map: MultiCycleMap<String, TestingStruct> = (0..10)
+            .map(|i| (None, TestingStruct::from_value(i)))
+            .collect();
         let iter = map.iter_unmapped();
         println!("{iter:?}");
-        assert_eq!(iter.len(), 20);
-        assert_eq!(iter.clone().len(), 20);
-        assert_eq!(
-            iter.map(|op| op.cloned())
-                .collect::<MultiCycleMap<String, TestingStruct>>(),
-            map
-        );
+        assert_eq!(iter.len(), 10);
+        assert_eq!(iter.clone().len(), 10);
         let map = construct_default_map();
         let iter = map.iter_unmapped();
         println!("{iter:?}");
         assert_eq!(iter.len(), 0);
         assert_eq!(iter.clone().len(), 0);
-        assert_eq!(
-            iter.map(|op| op.cloned())
-                .collect::<MultiCycleMap<String, TestingStruct>>(),
-            MultiCycleMap::new()
-        );
     }
 
     #[test]
     fn pairing_tests() {
-        let mut map = construct_unpaired_map();
+        let mut map: MultiCycleMap<String, TestingStruct> = (0..10)
+            .map(|i| (None, TestingStruct::from_value(i)))
+            .collect();
         for i in 0..5 {
-            assert!(map.pair(&i.to_string(), &TestingStruct::from_value(i)));
+            assert_eq!(
+                map.insert_left(i.to_string(), &TestingStruct::from_value(i)),
+                None
+            );
         }
         for i in 0..5 {
-            assert!(!map.pair(&i.to_string(), &TestingStruct::from_value(i + 5)));
+            assert!(map.pair(&i.to_string(), &TestingStruct::from_value(i + 5)));
+            assert!(map.are_mapped(&i.to_string(), &TestingStruct::from_value(i + 5)));
+            assert!(!map.are_mapped(&i.to_string(), &TestingStruct::from_value(i)));
         }
         for i in 0..10 {
             if i < 5 {
-                assert!(map.are_mapped(&i.to_string(), &TestingStruct::from_value(i)));
+                assert!(map.are_mapped(&i.to_string(), &TestingStruct::from_value(i+5)));
+                assert!(!map.are_mapped(&i.to_string(), &TestingStruct::from_value(i)));
             } else {
                 assert!(!map.are_mapped(&i.to_string(), &TestingStruct::from_value(i)));
+                assert!(map.are_mapped(&(i-5).to_string(), &TestingStruct::from_value(i)));
             }
         }
     }

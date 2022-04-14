@@ -258,12 +258,12 @@ mod tests {
                 true
             }
         });
-        assert_eq!(map.len_left(), 34);
+        assert_eq!(map.len_left(), 33);
         assert_eq!(map.len_right(), 50);
         for op in map.iter() {
             match op {
                 SomeLeft(val) | SomeBoth(val, _) => {
-                    assert_eq!(val % 2, 0);
+                    assert_eq!(val % 2, 1);
                 }
                 _ => {}
             }
@@ -294,7 +294,7 @@ mod tests {
             println!("{op:?}");
             match op {
                 SomeBoth(val, _) => {
-                    assert_eq!(val % 2, 0);
+                    assert_eq!(val % 2, 1);
                 }
                 _ => {}
             }
@@ -325,13 +325,13 @@ mod tests {
                 true
             }
         });
-        assert_eq!(map.len_left(), 51);
-        assert_eq!(map.len_right(), 67);
+        assert_eq!(map.len_left(), 50);
+        assert_eq!(map.len_right(), 34);
         for op in map.iter() {
             println!("{op:?}");
             match op {
                 SomeLeft(val) => {
-                    assert_eq!(val % 2, 0);
+                    assert_eq!(val % 2, 1);
                 }
                 _ => {}
             }
@@ -561,11 +561,9 @@ mod tests {
             );
         }
         let other_map: PartialCycleMap<String, TestingStruct> = map
-            .drain_filter(|op| {
-                match op.get_right() {
-                    Some(r) => r.value % 2 == 0,
-                    None => false,
-                }
+            .drain_filter(|op| match op.get_right() {
+                Some(r) => r.value % 2 == 0,
+                None => false,
             })
             .collect();
         let mut new_map_one = construct_unpaired_map();

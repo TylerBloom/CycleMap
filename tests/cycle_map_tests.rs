@@ -223,7 +223,7 @@ mod tests {
         map.retain(|x, _| x % 2 == 0);
         assert_eq!(map.len(), 50);
         for (val, s) in map.iter() {
-            assert_eq!(val % 2, 0);
+            assert_eq!(val % 2, 1);
             println!("{val}, {s}");
         }
     }
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(map.len(), 5);
         assert_eq!(map.capacity(), cap);
         assert_eq!(other_map.len(), 5);
-        for (_,t) in other_map.iter() {
+        for (_, t) in other_map.iter() {
             assert!(t.value % 2 == 0);
         }
     }

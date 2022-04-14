@@ -196,14 +196,29 @@ where
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
         let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
         let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
-        match (opt_left, opt_right) {
-            (Some(left), Some(right)) => {
-                right.pairs.insert((l_hash, left.id));
+        let (digest, to_remove) = match (opt_left, opt_right) {
+            (Some(left), Some(_)) => {
+                let to_remove = Some((left.hash, left.id));
                 left.hash = r_hash;
-                true
+                (true, to_remove)
             }
-            _ => false,
+            _ => (false, None),
+        };
+        // The specified right item is updated here to avoid potential collision should hash ==
+        // r_hash
+        if let Some((hash, id)) = to_remove {
+            let old_right = self
+                .right_set
+                .get_mut(hash, right_hash_and_id(&(l_hash, id)))
+                .unwrap();
+            old_right.pairs.remove(&(l_hash, id));
+            let new_right = self
+                .right_set
+                .get_mut(r_hash, equivalent_key(right))
+                .unwrap();
+            new_right.pairs.insert((l_hash, id));
         }
+        digest
     }
 
     /// Determines if an item in the right set is paired.
@@ -424,7 +439,7 @@ where
         // right hash, left id
         let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
         for (opt_l, r) in self.iter() {
-            if !f(opt_l, r) {
+            if f(opt_l, r) {
                 let r_hash = make_hash::<R, S>(&self.hash_builder, &r);
                 let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
                 to_drop.push((r_hash, r_item.id));
@@ -444,7 +459,7 @@ where
         // right hash, left id
         let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
         for (l, r) in self.iter_mapped() {
-            if !f(l, r) {
+            if f(l, r) {
                 let r_hash = make_hash::<R, S>(&self.hash_builder, &r);
                 let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
                 to_drop.push((r_hash, r_item.id));
@@ -464,7 +479,7 @@ where
         // right hash, left id
         let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
         for r in self.iter_unmapped() {
-            if !f(r) {
+            if f(r) {
                 let r_hash = make_hash::<R, S>(&self.hash_builder, &r);
                 let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
                 to_drop.push((r_hash, r_item.id));
@@ -607,6 +622,28 @@ impl<L, R, S> MultiCycleMap<L, R, S> {
     }
 }
 
+impl<L, R, S> Extend<(Option<L>, R)> for MultiCycleMap<L, R, S>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+    S: BuildHasher,
+{
+    #[inline]
+    fn extend<T: IntoIterator<Item = (Option<L>, R)>>(&mut self, iter: T) {
+        for (left, right) in iter {
+            if let Some(l) = left {
+                if self.contains_right(&right) {
+                    self.insert_left(l, &right);
+                } else {
+                    self.insert(l, right);
+                }
+            } else {
+                self.insert_right(right);
+            }
+        }
+    }
+}
+
 impl<L, R, S> Extend<(L, R)> for MultiCycleMap<L, R, S>
 where
     L: Hash + Eq,
@@ -622,6 +659,18 @@ where
                 self.insert(left, right);
             }
         }
+    }
+}
+
+impl<L, R> FromIterator<(Option<L>, R)> for MultiCycleMap<L, R>
+where
+    L: Hash + Eq,
+    R: Hash + Eq,
+{
+    fn from_iter<T: IntoIterator<Item = (Option<L>, R)>>(iter: T) -> Self {
+        let mut digest = MultiCycleMap::default();
+        digest.extend(iter);
+        digest
     }
 }
 
@@ -702,8 +751,8 @@ where
                         .map_ref
                         .left_set
                         .get(pair.0, left_just_id(pair.1))
-                        .unwrap();
-                    return Some((Some(&left.value), &r_ref.value));
+                        .map(|o| &o.value);
+                    return Some((left, &r_ref.value));
                 }
             }
             None => None,

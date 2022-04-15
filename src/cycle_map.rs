@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     default::Default,
     fmt,
     hash::{BuildHasher, Hash},
@@ -11,11 +12,15 @@ use core::mem;
 use hashbrown::{
     hash_map::DefaultHashBuilder,
     raw::{RawDrain, RawIter, RawTable},
+    TryReserveError,
 };
 
 use crate::optionals::*;
 use crate::utils::*;
 use OptionalPair::*;
+
+#[cfg(doc)]
+use hashbrown::HashMap;
 
 // Contains a value and the hash of the item that the value maps to.
 pub(crate) struct MappingPair<T> {
@@ -41,12 +46,18 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
     move |x| id == x.id
 }
 
-/// A strict one-to-one map.
+/// A hash map implementation that allows bi-directional, constant time lookups.
 ///
-/// CycleMap bijectively maps two sets, i.e. every item always in a set
-/// has a "companion" item in the other set.
+/// CycleMap bijectively maps two sets together.
+/// In other words, every item in a set is mapped to one and only one item in the other set.
 /// It does this while maintaining the same complexitity for lookups
 /// as a traditional hash map and while only keeping a single copy of each element.
+///
+/// `CycleMap` is built on top of the [`HashMap`] implementation found in [`hashbrown`].
+/// As such, it uses the same default hashing algorithm as `hashbrown`'s `HashMap`.
+///
+/// Moreover, the requirements for a "key" for a `HashMap` is required for all values of a
+/// CycleMap, namely [`Eq`] and [`Hash`].
 ///
 /// # Examples
 /// ```
@@ -55,7 +66,10 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// let values = vec![ ("zero", 0), ("one", 1), ("two", 2), ("three", 3), ("four", 4), ("five", 5),
 /// ("six", 6), ("seven", 7), ("eight", 8), ("nine", 9), ];
 ///
-/// let mut converter: CycleMap<String, u64> = values.iter().map(|(s,i)| (s.to_string(),*i)).collect();
+/// let mut converter: CycleMap<String, u64> = values.iter()
+///                                                  .cloned()
+///                                                  .map(|(s,i)| (s.to_string(),i))
+///                                                  .collect();
 ///
 /// // The map should contain 10 pairs
 /// assert_eq!(converter.len(), 10);
@@ -78,18 +92,6 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// assert!(converter.contains_right(&2));
 ///
 /// ```
-///
-/// A CycleMap contains a "left" and "right" set.
-/// On insert, the given pair
-/// of items is split. The left item is stored in the left set with the hash of the right item,
-/// likewise for the right item. As such, both the left and right types need to implement [`Eq`]
-/// and [`Hash`], and as with other hashed collections, it is a logic error for an item to be
-/// modified in such a way that the item's hash or its equality, as changes while it is in the bag.
-///
-/// Sorting values like this allows for look up on pair with a standard HashMap and makes resizes
-/// faster but is not with a cost. When inserting a new pair of elements, there is potentail for
-/// collision. This collision should be excendingly rare and can only happen upon inserting new
-/// elements. You can read more about what causes collisions [here]("").
 pub struct CycleMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
     pub(crate) counter: u64,
@@ -101,8 +103,8 @@ impl<L, R> CycleMap<L, R, DefaultHashBuilder> {
     #[inline]
     /// Creates a new, empty `CycleMap`.
     /// The capacity of the new map will be 0.
-    /// 
-    /// # Examples 
+    ///
+    /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
     /// let map: CycleMap<u64, String> = CycleMap::new();
@@ -113,7 +115,7 @@ impl<L, R> CycleMap<L, R, DefaultHashBuilder> {
 
     #[inline]
     /// Creates a new, empty `CycleMap` with inner sets that each have at least the given capacity
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
@@ -192,11 +194,11 @@ where
 
     /// Returns `true` if both items are in the map and are paired together; otherwise, returns
     /// `false`.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// map.insert(1, "1");
     /// assert!(map.are_paired(&1, &"1"));
@@ -217,11 +219,11 @@ where
     }
 
     /// Returns `true` if the item is found and `false` otherwise.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// map.insert(1, "1");
     /// assert!(map.contains_left(&1));
@@ -233,11 +235,11 @@ where
     }
 
     /// Returns `true` if the item is found and `false` otherwise.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// map.insert(1, "1");
     /// assert!(map.contains_right(&"1"));
@@ -249,11 +251,11 @@ where
     }
 
     /// Removes and returns the give pair from the map provided that they are paired together.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// map.insert(1, "1");
     /// assert_eq!(map.remove(&1, &"1"), Some((1, "1")));
@@ -269,11 +271,11 @@ where
 
     /// Removes and returns the given item from the left set and its associated item from the right
     /// set.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// map.insert(1, "1");
     /// assert_eq!(map.remove_via_left(&1), Some((1, "1")));
@@ -292,11 +294,11 @@ where
 
     /// Removes and returns the given item from the right set and its associated item from the left
     /// set.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// map.insert(1, "1");
     /// assert_eq!(map.remove_via_right(&"1"), Some((1, "1")));
@@ -327,7 +329,7 @@ where
 
     /// Swaps an item in the left set with another item, remapping the old item's associated right
     /// item to the new left item, and returns the old left item.
-    /// 
+    ///
     /// In other words, the pair `(l1, r)` becomes `(l2, r)`.
     ///
     /// If there is another item in the left set that is equal to the new left item which is paired
@@ -338,18 +340,18 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// // 101 is not in the map, so nothing is returned
     /// let op = map.swap_left(&101, 102);
     /// assert_eq!(op, Neither);
-    /// 
+    ///
     /// // Swap the 42 in the pair (42, "42") with 101
     /// let op = map.swap_left(&42, 101);
     /// assert_eq!(op, SomeLeft(42));
     /// assert!(map.are_paired(&101, &"42".to_string()));
-    /// 
+    ///
     /// // Swap the 84 in the pair (84, "84") with 0 and removes the pair (0, "0")
     /// let op = map.swap_left(&84, 0);
     /// assert_eq!(op, SomeBoth(84, (0, "0".to_string())));
@@ -404,14 +406,14 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// // Swap the 42 in the pair (42, "42") with 101
     /// let op = map.swap_left_checked(&42, &"42".to_string(), 101);
     /// assert_eq!(op, SomeLeft(42));
     /// assert!(map.are_paired(&101, &"42".to_string()));
-    /// 
+    ///
     /// // Fails to swap
     /// let op = map.swap_left_checked(&84, &"85".to_string(), 101);
     /// assert_eq!(op, Neither);
@@ -432,14 +434,14 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// // Swap the 42 in the pair (42, "42") with 101
     /// let op = map.swap_left_or_insert(&42, 101, "42".to_string());
     /// assert_eq!(op, SomeLeft(42));
     /// assert!(map.are_paired(&101, &"42".to_string()));
-    /// 
+    ///
     /// // Inserts the pair (103, "103") since 102 isn't in the map
     /// let op = map.swap_left_or_insert(&102, 103, "103".to_string());
     /// assert_eq!(op, Neither);
@@ -477,7 +479,7 @@ where
 
     /// Swaps an item in the right set with another item, remapping the old item's associated left
     /// item, and returns the old right item
-    /// 
+    ///
     /// In other words, the pair `(l, r1)` becomes `(l, r2)`.
     ///
     /// If there is another item in the left set that is equal to the new left item which is paired
@@ -488,18 +490,18 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// // 101 is not in the map, so nothing is returned
     /// let op = map.swap_right(&"101".to_string(), "102".to_string());
     /// assert_eq!(op, Neither);
-    /// 
+    ///
     /// // Swap the "42" in the pair (42, "42") with "101"
     /// let op = map.swap_right(&"42".to_string(), "101".to_string());
     /// assert_eq!(op, SomeLeft("42".to_string()));
     /// assert!(map.are_paired(&42, &"101".to_string()));
-    /// 
+    ///
     /// // Swap the "84" in the pair (84, "84") with "0" and removes the pair (0, "0")
     /// let op = map.swap_right(&"84".to_string(), "0".to_string());
     /// assert_eq!(op, SomeBoth("84".to_string(),(0, "0".to_string())));
@@ -555,14 +557,14 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// // Swap the "42" in the pair (42, "42") with "101"
     /// let op = map.swap_right_checked(&"42".to_string(), &42, "101".to_string());
     /// assert_eq!(op, SomeLeft("42".to_string()));
     /// assert!(map.are_paired(&42, &"101".to_string()));
-    /// 
+    ///
     /// // Fails to swap
     /// let op = map.swap_right_checked(&"84".to_string(), &85, "101".to_string());
     /// assert_eq!(op, Neither);
@@ -585,14 +587,14 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// // Swap the "42" in the pair (42, "42") with "101"
     /// let op = map.swap_right_or_insert(&"42".to_string(), "101".to_string(), 42);
     /// assert_eq!(op, SomeLeft("42".to_string()));
     /// assert!(map.are_paired(&42, &"101".to_string()));
-    /// 
+    ///
     /// // Inserts the pair (103, "103") since 102 isn't in the map
     /// let op = map.swap_right_or_insert(&"102".to_string(), "103".to_string(), 103);
     /// assert_eq!(op, Neither);
@@ -639,7 +641,7 @@ where
     }
 
     /// Gets a reference to an item in the left set using an item in the right set.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
@@ -648,9 +650,13 @@ where
     /// assert_eq!(map.get_left(&"1"), Some(&1));
     /// assert_eq!(map.get_left(&"2"), None);
     /// ```
-    pub fn get_left(&self, item: &R) -> Option<&L> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
-        let right_pairing: &MappingPair<R> = self.get_right_inner_with_hash(item, r_hash)?;
+    pub fn get_left<Q>(&self, item: &Q) -> Option<&L>
+    where
+        Q: Borrow<R>,
+    {
+        let r_hash = make_hash::<R, S>(&self.hash_builder, item.borrow());
+        let right_pairing: &MappingPair<R> =
+            self.get_right_inner_with_hash(item.borrow(), r_hash)?;
         match self
             .left_set
             .get(right_pairing.hash, hash_and_id(r_hash, right_pairing.id))
@@ -661,7 +667,7 @@ where
     }
 
     /// Gets a reference to an item in the right set using an item in the left set.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
@@ -685,9 +691,9 @@ where
     /* Might be used in the future
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
     fn get_via_hashes_and_id(&mut self, l_hash: u64, r_hash: u64, id: u64) -> Option<(&L, &R)> {
-        let left_pairing = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
-        let right_pairing = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
-        Some((&left_pairing.value, &right_pairing.value))
+    let left_pairing = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
+    let right_pairing = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
+    Some((&left_pairing.value, &right_pairing.value))
     }
     */
 
@@ -709,12 +715,12 @@ where
 
     /// Returns an iterator that visits all the pairs in the map in an arbitary order.
     ///
-    /// # Examples 
-    /// ```rust 
+    /// # Examples
+    /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let map: CycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
-    /// 
+    ///
     /// for (left, right) in map.iter() {
     ///     println!("left: {left}, right: {right}");
     /// }
@@ -728,12 +734,12 @@ where
 
     /// Returns an iterator over items in the left set in an arbitary order.
     ///
-    /// # Examples 
-    /// ```rust 
+    /// # Examples
+    /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let map: CycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
-    /// 
+    ///
     /// for left in map.iter_left() {
     ///     println!("left: {left}");
     /// }
@@ -747,12 +753,12 @@ where
 
     /// Returns an iterator over items in the right set in an arbitary order.
     ///
-    /// # Examples 
-    /// ```rust 
+    /// # Examples
+    /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let map: CycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
-    /// 
+    ///
     /// for right in map.iter_right() {
     ///     println!("right: {right}");
     /// }
@@ -767,21 +773,21 @@ where
     /// Clears the map, returning all pairs as an iterator while keeping the backing memory
     /// allocated for reuse. If the returned iterator is dropped before being fully consumed, it
     /// drops the remaining pairs.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// map.insert(1, "1");
     /// map.insert(2, "2");
     /// let cap = map.capacity();
-    /// 
+    ///
     /// for (l, r) in map.drain().take(1) {
     ///     assert!(l == 1 || l == 2);
     ///     assert!(r == "1" || r == "2");
     /// }
-    /// 
+    ///
     /// assert!(map.is_empty());
     /// assert_eq!(map.capacity(), cap);
     /// ```
@@ -795,13 +801,13 @@ where
 
     /// Returns an iterator that removes and yields all pairs that evaluate to `true` in the given
     /// closure while keeping the backing memory allocated.
-    /// 
+    ///
     /// If the closure returns `false`, or panics, the element remains in the map and will not be
     /// yielded.
-    /// 
+    ///
     /// If the iterator is only partially consumed or not consumed at all, each of the remaining
     /// elements will still be subjected to the closure and removed and dropped if it returns true.
-    /// 
+    ///
     /// It is unspecified how many more elements will be subjected to the closure if a panic occurs
     /// in the closure, or a panic occurs while dropping an element, or if the `DrainFilter` value
     /// is leaked.
@@ -809,14 +815,14 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// // Iterate over the map, remove the pairs with an odd left item
     /// for (l, _) in map.drain_filter(|l,_| l % 2 == 1) {
     ///     assert!(l % 2 == 1);
     /// }
-    /// 
+    ///
     /// assert_eq!(map.len(), 50);
     /// ```
     pub fn drain_filter<F>(&mut self, f: F) -> DrainFilterIter<'_, L, R, F>
@@ -839,9 +845,9 @@ where
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
-    /// 
+    ///
     /// //Remove all pairs with an odd left item
     /// map.retain(|l, _| l % 2 == 0);
     /// assert_eq!(map.len(), 50);
@@ -867,23 +873,112 @@ where
             self.remove_via_hashes_and_id(l_hash, r_hash, id);
         }
     }
-}
 
-impl<L, R, S> CycleMap<L, R, S> {
-    /// Creates a `CycleMap`and that uses the given hasher.
+    /// Shrinks the capacity of the map with a lower limit. It will drop down no lower than the
+    /// supplied limit while maintaining the internal rules and possibly leaving some space in
+    /// accordance with the resize policy.
     /// 
-    /// Warning: `hash_builder` is normally randomly generated, and is designed to allow
-    /// `CycleMap`s to be resistant to attacks that cause many collisions and very poor
-    /// performance. Setting it manually using this function can expose a DoS attack vector.
-    /// 
-    /// The `hash_builder` passed should implement the [`BuildHasher`] trait for the CycleMap to be
-    /// useful, see its documentation for details.
+    /// This function does nothing if the current capacity is smaller than the supplied minimum capacity.
     /// 
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// use std::collections::hash_map::RandomState;
     /// 
+    /// let mut map: CycleMap<i32, i32> = CycleMap::with_capacity(100);
+    /// map.insert(1, 2);
+    /// map.insert(3, 4);
+    /// assert!(map.capacity() >= 100);
+    /// map.shrink_to(10);
+    /// assert!(map.capacity() >= 10);
+    /// map.shrink_to(0);
+    /// assert!(map.capacity() >= 2);
+    /// map.shrink_to(10);
+    /// assert!(map.capacity() >= 2);
+    /// ```
+    pub fn shrink_to(&mut self, min_capacity: usize) {
+        self.left_set
+            .shrink_to(min_capacity, make_hasher(&self.hash_builder));
+        self.right_set
+            .shrink_to(min_capacity, make_hasher(&self.hash_builder));
+    }
+
+    /// Shrinks the capacity of the map as much as possible. It will drop down as much as possible
+    /// while maintaining the internal rules and possibly leaving some space in accordance with the
+    /// resize policy.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::CycleMap;
+    /// 
+    /// let mut map: CycleMap<i32, i32> = CycleMap::with_capacity(100);
+    /// map.insert(1, 2);
+    /// map.insert(3, 4);
+    /// assert!(map.capacity() >= 100);
+    /// map.shrink_to_fit();
+    /// assert!(map.capacity() >= 2);
+    /// ```
+    pub fn shrink_to_fit(&mut self) {
+        self.left_set
+            .shrink_to(self.len(), make_hasher(&self.hash_builder));
+        self.right_set
+            .shrink_to(self.len(), make_hasher(&self.hash_builder));
+    }
+
+    /// Reserves capacity for at least additional more elements to be inserted in the HashMap. The
+    /// collection may reserve more space to avoid frequent reallocations.
+    /// 
+    /// # Panics
+    /// Panics if the new allocation size overflows usize.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::CycleMap;
+    /// let mut map: CycleMap<&str, i32> = CycleMap::new();
+    /// map.reserve(10);
+    /// ```
+    pub fn reserve(&mut self, additional: usize) {
+        self.left_set
+            .reserve(additional, make_hasher(&self.hash_builder));
+        self.right_set
+            .reserve(additional, make_hasher(&self.hash_builder));
+    }
+
+    /// Tries to reserve capacity for at least additional more elements to be inserted in the given
+    /// HashMap<K,V>. The collection may reserve more space to avoid frequent reallocations.
+    /// 
+    /// # Errors
+    /// If the capacity overflows, or the allocator reports a failure, then an error is returned.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::CycleMap;
+    /// let mut map: CycleMap<&str, isize> = CycleMap::new();
+    /// map.try_reserve(10).expect("why is the test harness OMGing on 10 bytes?");
+    /// ```
+    pub fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.left_set
+            .try_reserve(additional, make_hasher(&self.hash_builder))?;
+        self.right_set
+            .try_reserve(additional, make_hasher(&self.hash_builder))?;
+        Ok(())
+    }
+}
+
+impl<L, R, S> CycleMap<L, R, S> {
+    /// Creates a `CycleMap`and that uses the given hasher.
+    ///
+    /// Warning: `hash_builder` is normally randomly generated, and is designed to allow
+    /// `CycleMap`s to be resistant to attacks that cause many collisions and very poor
+    /// performance. Setting it manually using this function can expose a DoS attack vector.
+    ///
+    /// The `hash_builder` passed should implement the [`BuildHasher`] trait for the CycleMap to be
+    /// useful, see its documentation for details.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::CycleMap;
+    /// use std::collections::hash_map::RandomState;
+    ///
     /// let s = RandomState::new();
     /// let mut map = CycleMap::with_capacity_and_hasher(10, s);
     /// map.insert(1, "1");
@@ -899,21 +994,21 @@ impl<L, R, S> CycleMap<L, R, S> {
 
     /// Creates a `CycleMap` with inner sets that have at least the specified capacity, and that
     /// uses the given hasher.
-    /// 
+    ///
     /// The map will be able to hold at least `capacity` many pairs before reallocating.
-    /// 
+    ///
     /// Warning: `hash_builder` is normally randomly generated, and is designed to allow
     /// `CycleMap`s to be resistant to attacks that cause many collisions and very poor
     /// performance. Setting it manually using this function can expose a DoS attack vector.
-    /// 
+    ///
     /// The `hash_builder` passed should implement the [`BuildHasher`] trait for the CycleMap to be
     /// useful, see its documentation for details.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
     /// use std::collections::hash_map::RandomState;
-    /// 
+    ///
     /// let s = RandomState::new();
     /// let mut map = CycleMap::with_capacity_and_hasher(10, s);
     /// map.insert(1, "1");
@@ -947,22 +1042,14 @@ impl<L, R, S> CycleMap<L, R, S> {
         self.left_set.capacity()
     }
 
-    /* Might be used in the future
-    /// Returns the raw capacity of the inner sets (same between sets)
-    fn raw_capacity(&self) -> usize {
-        // The size of the sets is always equal
-        self.left_set.buckets()
-    }
-    */
-
     /// Returns the number of items in the inner sets.
-    /// 
+    ///
     /// Note: Only one number is returned since both sets always have the name size.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map = CycleMap::new();
     /// assert_eq!(map.len(), 0);
     /// map.insert(1, "1");
@@ -978,7 +1065,7 @@ impl<L, R, S> CycleMap<L, R, S> {
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut a = CycleMap::new();
     /// assert!(a.is_empty());
     /// a.insert(1, "a");
@@ -990,11 +1077,11 @@ impl<L, R, S> CycleMap<L, R, S> {
     }
 
     /// Removes all items for the map while keeping the backing memory allocated for reuse.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut a = CycleMap::new();
     /// assert!(a.is_empty());
     /// a.insert(1, "a");

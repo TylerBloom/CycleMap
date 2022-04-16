@@ -11,6 +11,7 @@ use core::mem;
 use hashbrown::{
     hash_map::DefaultHashBuilder,
     raw::{RawDrain, RawIter, RawTable},
+    TryReserveError,
 };
 
 use crate::optionals::*;
@@ -74,12 +75,31 @@ where
 {
     /// Adds a pair of items to the map.
     ///
-    /// Should the left element be equal to another left element, the old pair is removed and
-    /// returned. The same goes for the right element.
+    /// Should the left element be equal to another left element, the (optional) pair containing
+    /// the old left item is removed and returned. The same goes for the new right element.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
     ///
-    /// There is a chance for collision here. Collision occurs when the map contains elements with
-    /// identical hashes as the given left and right elements, and they are mapped to each other.
-    /// In such a case, the old pair is returned and the new pair is inserted.
+    /// let mut map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// // Neither 5 nor "5" is in map
+    /// let op = map.insert(5, 5.to_string());
+    /// assert_eq!(op, (Neither, Neither));
+    ///
+    /// // 0 is in the map, its old pairing is removed
+    /// let op = map.insert(0, 6.to_string());
+    /// assert_eq!(op, (SomeBoth(0, 0.to_string()), Neither));
+    ///
+    /// // "1" is in the map, its old pairing is removed
+    /// let op = map.insert(7, 1.to_string());
+    /// assert_eq!(op, (Neither, SomeBoth(1, 1.to_string())));
+    ///
+    /// // Both 2 and "3" are in the map, so their old pairings are removed
+    /// let op = map.insert(2, 3.to_string());
+    /// assert_eq!(op, (SomeBoth(2, 2.to_string()), SomeBoth(3, 3.to_string())));
+    /// ```
     pub fn insert(&mut self, left: L, right: R) -> (OptionalPair<L, R>, OptionalPair<L, R>) {
         let opt_from_left = self.remove_via_left(&left);
         let opt_from_right = self.remove_via_right(&right);
@@ -112,10 +132,32 @@ where
 
     /// Adds an item to the left set of the map.
     ///
-    /// Should this item be equal to another, the old item is removed. If that item was paired with
+    /// Should this item be equal to another, the old item is removed. If that item was paired, the
+    /// pair is removed. In either case, the (optional) pair is returned.
     /// a right item, the pair is removed.
     ///
     /// Note: If you want to swap the left item in a pair, use the [`swap_left`] method.
+    /// 
+    /// Also Note: This method will never return the `SomeLeft` variant of `OptionalPair`.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let mut map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// // 5 is not in map
+    /// let op = map.insert_left(5);
+    /// assert_eq!(op, Neither);
+    ///
+    /// // 5 is in the map, but is unpaired
+    /// let op = map.insert_left(5);
+    /// assert_eq!(op, SomeLeft(5));
+    ///
+    /// // 0 is in the map, its old pairing is removed
+    /// let op = map.insert_left(0);
+    /// assert_eq!(op, SomeBoth(0, 0.to_string()));
+    /// ```
     ///
     /// [`swap_left`]: struct.PartialCycleMap.html#method.swap_left
     pub fn insert_left(&mut self, left: L) -> OptionalPair<L, R> {
@@ -142,6 +184,27 @@ where
     /// a left item, the pair is removed.
     ///
     /// Note: If you want to swap the right item in a pair, use the [`swap_right`] method.
+    /// 
+    /// Also Note: This method will never return the `SomeLeft` variant of `OptionalPair`.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let mut map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// // "5" is not in map
+    /// let op = map.insert_right("5".to_string());
+    /// assert_eq!(op, Neither);
+    ///
+    /// // "5" is in the map, but is unpaired
+    /// let op = map.insert_right("5".to_string());
+    /// assert_eq!(op, SomeRight("5".to_string()));
+    ///
+    /// // "0" is in the map, its old pairing is removed
+    /// let op = map.insert_right("0".to_string());
+    /// assert_eq!(op, SomeBoth(0, "0".to_string()));
+    /// ```
     ///
     /// [`swap_right`]: struct.PartialCycleMap.html#method.swap_right
     pub fn insert_right(&mut self, right: R) -> OptionalPair<L, R> {
@@ -194,7 +257,7 @@ where
     ///
     /// [`pair_forced_remove`]: struct.PartialCycleMap.html#method.pair_forced_remove
     pub fn pair_forced(&mut self, l: &L, r: &R) -> OptionalPair<&L, &R> {
-        if self.are_mapped(l, r) {
+        if self.are_paired(l, r) {
             return Neither;
         }
         let l_hash = make_hash::<L, S>(&self.hash_builder, l);
@@ -272,7 +335,7 @@ where
     /// [`swap_left`]: struct.PartialCycleMap.html#method.swap_left
     /// [`swap_right`]: struct.PartialCycleMap.html#method.swap_right
     pub fn pair_forced_remove(&mut self, l: &L, r: &R) -> OptionalPair<L, R> {
-        if self.are_mapped(l, r) {
+        if self.are_paired(l, r) {
             return Neither;
         }
         let l_hash = make_hash::<L, S>(&self.hash_builder, l);
@@ -364,10 +427,20 @@ where
         }
     }
 
-    /// Determines if two items are mapped to one another
+    /// Returns `true` if both items are in the map and are paired together; otherwise, returns
+    /// `false`.
     ///
-    /// Returns false if either item isn't found it its associated list.
-    pub fn are_mapped(&self, left: &L, right: &R) -> bool {
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut map = PartialCycleMap::new();
+    /// map.insert(1, "1");
+    /// assert!(map.are_paired(&1, &"1"));
+    /// assert!(!map.are_paired(&2, &"1"));
+    /// assert!(!map.are_paired(&2, &"2"));
+    /// ```
+    pub fn are_paired(&self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
         let opt_left = self.left_set.get(l_hash, equivalent_key(left));
@@ -380,25 +453,45 @@ where
         }
     }
 
-    /// Determines if the mapped contains the item in the left set
-    ///
     /// Returns `true` if the item is found and `false` otherwise.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut map = PartialCycleMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_left(2);
+    /// assert!(map.contains_left(&1));
+    /// assert!(map.contains_left(&2));
+    /// assert!(!map.contains_left(&3));
+    /// ```
     pub fn contains_left(&self, left: &L) -> bool {
         let hash = make_hash::<L, S>(&self.hash_builder, left);
         self.left_set.get(hash, equivalent_key(left)).is_some()
     }
 
-    /// Determines if the mapped contains the item in the right set
-    ///
     /// Returns `true` if the item is found and `false` otherwise.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut map = PartialCycleMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_right("2");
+    /// assert!(map.contains_right(&"1"));
+    /// assert!(map.contains_right(&"2"));
+    /// assert!(!map.contains_right(&"3"));
+    /// ```
     pub fn contains_right(&self, right: &R) -> bool {
         let hash = make_hash::<R, S>(&self.hash_builder, right);
         self.right_set.get(hash, equivalent_key(right)).is_some()
     }
 
-    /// Removes a pair of items only if they are mapped together and returns the pair
+    /// Removes a pair of items only if they are paired together and returns the pair
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(L, R)> {
-        if self.are_mapped(left, right) {
+        if self.are_paired(left, right) {
             Option::from(self.remove_via_left(left))
                 .map(|(opt_l, opt_r)| (opt_l.unwrap(), opt_r.unwrap()))
         } else {
@@ -471,7 +564,7 @@ where
     /// Swaps an item in the left set with another item, remaps the old item's associated right
     /// item, and returns the old left item.
     ///
-    /// If there is another item in the left set that is equal to the new left item which is mapped
+    /// If there is another item in the left set that is equal to the new left item which is paired
     /// to another right item, that cycle is removed.
     ///
     /// Note: This method will never return the `SomeRight` variant of `OptionalPair`.
@@ -525,7 +618,7 @@ where
     }
 
     /// Does what [`swap_left`] does, but fails to swap and returns None if the old item isn't
-    /// mapped to the given right item.
+    /// paired to the given right item.
     ///
     /// [`swap_left`]: struct.PartialCycleMap.html#method.swap_left
     pub fn swap_left_checked(
@@ -534,8 +627,8 @@ where
         expected: &R,
         new: L,
     ) -> OptionalPair<L, OptionalPair<L, R>> {
-        // Check if old and expected are mapped
-        if !self.are_mapped(old, expected) {
+        // Check if old and expected are paired
+        if !self.are_paired(old, expected) {
             return Neither;
         }
         self.swap_left(old, new)
@@ -627,7 +720,7 @@ where
         }
     }
 
-    /// Does what [`swap_right`] does, but fails to swap if the old item isn't mapped to the given
+    /// Does what [`swap_right`] does, but fails to swap if the old item isn't paired to the given
     /// left item.
     ///
     /// [`swap_right`]: struct.PartialCycleMap.html#method.swap_right
@@ -637,8 +730,8 @@ where
         expected: &L,
         new: R,
     ) -> OptionalPair<R, OptionalPair<L, R>> {
-        // Check if old and expected are mapped
-        if !self.are_mapped(expected, old) {
+        // Check if old and expected are paired
+        if !self.are_paired(expected, old) {
             return Neither;
         } // Things can be removed after this point
         self.swap_right(old, new)
@@ -687,6 +780,17 @@ where
     }
 
     /// Gets a reference to an item in the left set using an item in the right set.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let mut map = PartialCycleMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_right("2");
+    /// assert_eq!(map.get_left(&"1"), Some(&1));
+    /// assert_eq!(map.get_left(&"2"), None);
+    /// assert_eq!(map.get_left(&"3"), None);
+    /// ```
     pub fn get_left(&self, item: &R) -> Option<&L> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_pairing: &MappingPair<R> = self.get_right_inner_with_hash(item, r_hash)?;
@@ -701,6 +805,17 @@ where
     }
 
     /// Gets a reference to an item in the right set using an item in the left set.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let mut map = PartialCycleMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_left(2);
+    /// assert_eq!(map.get_right(&1), Some(&"1"));
+    /// assert_eq!(map.get_right(&2), None);
+    /// assert_eq!(map.get_right(&3), None);
+    /// ```
     pub fn get_right(&self, item: &L) -> Option<&R> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_pairing: &MappingPair<L> = self.get_left_inner_with_hash(item, l_hash)?;
@@ -744,6 +859,25 @@ where
     }
 
     /// Returns an iterator over the items in the map
+    /// 
+    /// Nope: The iterator will never yield the `Neither` variant of `OptionalPair` and will
+    /// instead yield `None`.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// for op in map.iter() {
+    ///     match op {
+    ///         SomeBoth(l, r) => { println!("left: {l}, right: {r}"); }
+    ///         SomeLeft(l) => { println!("just left: {l}"); }
+    ///         SomeRight(r) => { println!("just right: {r}"); }
+    ///         _ => { unreachable!("Never Neither"); }
+    ///     }
+    /// }
+    /// ```
     pub fn iter(&self) -> Iter<'_, L, R, S> {
         Iter {
             left_iter: unsafe { self.left_set.iter() },
@@ -751,9 +885,20 @@ where
         }
     }
 
-    /// Returns an iterator over the paired items in the map
-    pub fn iter_mapped(&self) -> MappedIter<'_, L, R, S> {
-        MappedIter {
+    /// Returns an iterator over the pairs in the map
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// for (left, right) in map.iter_paired() {
+    ///     println!("left: {left}, right: {right}");
+    /// }
+    /// ```
+    pub fn iter_paired(&self) -> PairedIter<'_, L, R, S> {
+        PairedIter {
             left_iter: unsafe { self.left_set.iter() },
             right_iter: unsafe { self.right_set.iter() },
             map_ref: self,
@@ -761,8 +906,26 @@ where
     }
 
     /// Returns an iterator over the unpaired items in the map
-    pub fn iter_unmapped(&self) -> UnmappedIter<'_, L, R, S> {
-        UnmappedIter {
+    /// 
+    /// Nope: The iterator will never yield the `Neither` nor `SomeBoth` variants of
+    /// `OptionalPair`.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// for op in map.iter_unpaired() {
+    ///     match op {
+    ///         SomeLeft(l) => { println!("just left: {l}"); }
+    ///         SomeRight(r) => { println!("just right: {r}"); }
+    ///         _ => { unreachable!("Never Neither or SomeBoth"); }
+    ///     } 
+    /// }
+    /// ```
+    pub fn iter_unpaired(&self) -> UnpairedIter<'_, L, R, S> {
+        UnpairedIter {
             left_iter: unsafe { self.left_set.iter() },
             right_iter: unsafe { self.right_set.iter() },
             map_ref: self,
@@ -770,6 +933,17 @@ where
     }
 
     /// Returns an iterator over elements in the left set
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// for left in map.iter_left() {
+    ///     println!("left: {left}");
+    /// }
+    /// ```
     pub fn iter_left(&self) -> SingleIter<'_, L> {
         SingleIter {
             iter: unsafe { self.left_set.iter() },
@@ -778,6 +952,17 @@ where
     }
 
     /// Returns an iterator over elements in the right set
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let map: PartialCycleMap<u64, String> = (0..5).map(|i| (i, i.to_string())).collect();
+    ///
+    /// for right in map.iter_right() {
+    ///     println!("right: {right}");
+    /// }
+    /// ```
     pub fn iter_right(&self) -> SingleIter<'_, R> {
         SingleIter {
             iter: unsafe { self.right_set.iter() },
@@ -785,8 +970,32 @@ where
         }
     }
 
-    /// Returns an iterator that removes and yields all items in the map while keeping the backing
-    /// memory allocated.
+    /// Clears the map, returning all items as an iterator while keeping the backing memory
+    /// allocated for reuse. If the returned iterator is dropped before being fully consumed, it
+    /// drops the remaining pairs.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let mut map = PartialCycleMap::new();
+    /// map.insert(1, "1");
+    /// map.insert(2, "2");
+    /// let cap = map.capacity_left();
+    ///
+    /// for op in map.drain().take(1) {
+    ///     match op {
+    ///         SomeBoth(l,r) => {
+    ///             assert!(l == 1 || l == 2);
+    ///             assert!(r == "1" || r == "2");
+    ///         }
+    ///         _ => { unreachable!("Only pairs were inserted."); }
+    ///     }
+    /// }
+    ///
+    /// assert!(map.is_empty());
+    /// assert_eq!(map.capacity_left(), cap);
+    /// ```
     pub fn drain(&mut self) -> DrainIter<'_, L, R> {
         DrainIter {
             left_iter: self.left_set.drain(),
@@ -794,8 +1003,34 @@ where
         }
     }
 
-    /// Returns an iterator that removes and yields all pairs that evaluate to `true` in the given
+    /// Returns an iterator that removes and yields all items that evaluate to `true` in the given
     /// closure while keeping the backing memory allocated.
+    ///
+    /// If the closure returns `false`, or panics, the element remains in the map and will not be
+    /// yielded.
+    ///
+    /// If the iterator is only partially consumed or not consumed at all, each of the remaining
+    /// elements will still be subjected to the closure and removed and dropped if it returns true.
+    ///
+    /// It is unspecified how many more elements will be subjected to the closure if a panic occurs
+    /// in the closure, or a panic occurs while dropping an element, or if the `DrainFilter` value
+    /// is leaked.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::{PartialCycleMap, OptionalPair::*};
+    ///
+    /// let mut map: PartialCycleMap<u64, String> = (0..50).map(|i| (i,i.to_string())).collect();
+    /// map.extend( (50..100).map(|i| SomeLeft(i)) );
+    ///
+    /// // Iterate over the map, remove all unpaired left items
+    /// for op in map.drain_filter(|op| if let SomeLeft(_) = op { true } else { false }) {
+    ///     assert!(op.get_left().is_some());
+    ///     assert!(op.get_right().is_none());
+    /// }
+    ///
+    /// assert_eq!(map.len_left(), 50);
+    /// ```
     pub fn drain_filter<F>(&mut self, f: F) -> DrainFilterIter<'_, L, R, F>
     where
         F: FnMut(OptionalPair<&L, &R>) -> bool,
@@ -863,12 +1098,12 @@ where
 
     /// Drops all pairs that cause the predicate to return `false` while keeping the backing memory
     /// allocated
-    pub fn retain_mapped<F>(&mut self, mut f: F)
+    pub fn retain_paired<F>(&mut self, mut f: F)
     where
         F: FnMut(&L, &R) -> bool,
     {
         let mut to_drop: Vec<(u64, u64, u64)> = Vec::with_capacity(self.left_set.len());
-        for (left, right) in self.iter_mapped() {
+        for (left, right) in self.iter_paired() {
             if f(left, right) {
                 let l_hash = make_hash::<L, S>(&self.hash_builder, left);
                 let r_hash = make_hash::<R, S>(&self.hash_builder, right);
@@ -883,13 +1118,13 @@ where
 
     /// Drops all unpaired items that cause the predicate to return `false` while keeping the backing memory
     /// allocated
-    pub fn retain_unmapped<F>(&mut self, mut f: F)
+    pub fn retain_unpaired<F>(&mut self, mut f: F)
     where
         F: FnMut(&OptionalPair<&L, &R>) -> bool,
     {
         let mut to_drop: Vec<(Option<u64>, Option<u64>, u64)> =
             Vec::with_capacity(self.left_set.len());
-        for op in self.iter_unmapped() {
+        for op in self.iter_unpaired() {
             if f(&op) {
                 match op {
                     SomeLeft(left) => {
@@ -921,6 +1156,150 @@ where
                 }
             }
         }
+    }
+
+    /// Shrinks the capacity of the left set with a lower limit. It will drop down no lower than the
+    /// supplied limit while maintaining the internal rules and possibly leaving some space in
+    /// accordance with the resize policy.
+    ///
+    /// This function does nothing if the current capacity is smaller than the supplied minimum capacity.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut map: PartialCycleMap<i32, i32> = PartialCycleMap::with_capacity(100);
+    /// map.insert(1, 2);
+    /// map.insert(3, 4);
+    /// assert!(map.capacity_left() >= 100);
+    /// map.shrink_to_left(10);
+    /// assert!(map.capacity_left() >= 10);
+    /// map.shrink_to_left(0);
+    /// assert!(map.capacity_left() >= 2);
+    /// map.shrink_to_left(10);
+    /// assert!(map.capacity_left() >= 2);
+    /// ```
+    pub fn shrink_to_left(&mut self, min_capacity: usize) {
+        self.left_set
+            .shrink_to(min_capacity, make_hasher(&self.hash_builder));
+    }
+
+    /// Shrinks the capacity of the right set with a lower limit. It will drop down no lower than the
+    /// supplied limit while maintaining the internal rules and possibly leaving some space in
+    /// accordance with the resize policy.
+    ///
+    /// This function does nothing if the current capacity is smaller than the supplied minimum capacity.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut map: PartialCycleMap<i32, i32> = PartialCycleMap::with_capacity(100);
+    /// map.insert(1, 2);
+    /// map.insert(3, 4);
+    /// assert!(map.capacity_right() >= 100);
+    /// map.shrink_to_left(10);
+    /// assert!(map.capacity_right() >= 10);
+    /// map.shrink_to_left(0);
+    /// assert!(map.capacity_right() >= 2);
+    /// map.shrink_to_left(10);
+    /// assert!(map.capacity_right() >= 2);
+    /// ```
+    pub fn shrink_to_right(&mut self, min_capacity: usize) {
+        self.right_set
+            .shrink_to(min_capacity, make_hasher(&self.hash_builder));
+    }
+
+    /// Shrinks the capacity of the map as much as possible. It will drop down as much as possible
+    /// while maintaining the internal rules and possibly leaving some space in accordance with the
+    /// resize policy.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut map: PartialCycleMap<i32, i32> = PartialCycleMap::with_capacity(100);
+    /// map.insert(1, 2);
+    /// map.insert(3, 4);
+    /// assert!(map.capacity_left() >= 100);
+    /// map.shrink_to_fit();
+    /// assert!(map.capacity_left() >= 2);
+    /// ```
+    pub fn shrink_to_fit(&mut self) {
+        self.left_set
+            .shrink_to(self.len_left(), make_hasher(&self.hash_builder));
+        self.right_set
+            .shrink_to(self.len_right(), make_hasher(&self.hash_builder));
+    }
+
+    /// Reserves capacity for at least additional more elements to be inserted in the HashMap. The
+    /// collection may reserve more space to avoid frequent reallocations.
+    ///
+    /// # Panics
+    /// Panics if the new allocation size overflows usize.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let mut map: PartialCycleMap<&str, i32> = PartialCycleMap::new();
+    /// map.reserve_left(10);
+    /// ```
+    pub fn reserve_left(&mut self, additional: usize) {
+        self.left_set
+            .reserve(additional, make_hasher(&self.hash_builder));
+    }
+
+    /// Reserves capacity for at least additional more elements to be inserted in the HashMap. The
+    /// collection may reserve more space to avoid frequent reallocations.
+    ///
+    /// # Panics
+    /// Panics if the new allocation size overflows usize.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let mut map: PartialCycleMap<&str, i32> = PartialCycleMap::new();
+    /// map.reserve_right(10);
+    /// ```
+    pub fn reserve_right(&mut self, additional: usize) {
+        self.right_set
+            .reserve(additional, make_hasher(&self.hash_builder));
+    }
+
+    /// Tries to reserve capacity for at least additional more elements to be inserted in the given
+    /// `HashMap<K,V>`. The collection may reserve more space to avoid frequent reallocations.
+    ///
+    /// # Errors
+    /// If the capacity overflows, or the allocator reports a failure, then an error is returned.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let mut map: PartialCycleMap<&str, isize> = PartialCycleMap::new();
+    /// map.try_reserve_left(10).expect("why is the test harness OMGing on 10 bytes?");
+    /// ```
+    pub fn try_reserve_left(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.left_set
+            .try_reserve(additional, make_hasher(&self.hash_builder))?;
+        Ok(())
+    }
+
+    /// Tries to reserve capacity for at least additional more elements to be inserted in the given
+    /// `HashMap<K,V>`. The collection may reserve more space to avoid frequent reallocations.
+    ///
+    /// # Errors
+    /// If the capacity overflows, or the allocator reports a failure, then an error is returned.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let mut map: PartialCycleMap<&str, isize> = PartialCycleMap::new();
+    /// map.try_reserve_right(10).expect("why is the test harness OMGing on 10 bytes?");
+    /// ```
+    pub fn try_reserve_right(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.right_set
+            .try_reserve(additional, make_hasher(&self.hash_builder))?;
+        Ok(())
     }
 }
 
@@ -973,7 +1352,7 @@ where
         self.iter().all(|op| match op {
             SomeLeft(l) => other.get_right(l).is_none(),
             SomeRight(r) => other.get_left(r).is_none(),
-            SomeBoth(l, r) => other.are_mapped(l, r),
+            SomeBoth(l, r) => other.are_paired(l, r),
             _ => {
                 unreachable!("There has to be at least one item.")
             }
@@ -1010,30 +1389,36 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
         }
     }
 
-    /// Returns a reference to the hasher used by the map
+    /// Returns a reference to the [`BuildHasher`] used by the map
     pub fn hasher(&self) -> &S {
         &self.hash_builder
     }
 
-    /// Returns the capacity of the left set
+    /// Returns the number of items that the left set can hold without reallocation.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
+    /// assert!(map.capacity_left() >= 100);
+    /// ```
     pub fn capacity_left(&self) -> usize {
         // The size of the sets is always equal
         self.left_set.capacity()
     }
 
-    /// Returns the capacity of the right set
+    /// Returns the number of items that the right set can hold without reallocation.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    /// let map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
+    /// assert!(map.capacity_right() >= 100);
+    /// ```
     pub fn capacity_right(&self) -> usize {
         // The size of the sets is always equal
         self.right_set.capacity()
     }
-
-    /* Might be used in the future
-    /// Returns the raw capacity of the inner sets (same between sets)
-    fn raw_capacity(&self) -> usize {
-    // The size of the sets is always equal
-    self.left_set.buckets()
-    }
-    */
 
     /// Returns the len of the inner sets (same between sets)
     pub fn len_left(&self) -> usize {
@@ -1048,11 +1433,36 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
     }
 
     /// Returns true if no items are in the map and false otherwise
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut map = PartialCycleMap::new();
+    /// assert!(map.is_empty());
+    /// map.insert(1, "1");
+    /// assert_eq!(map.len_left(), 1);
+    /// assert!(!map.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.len_left() + self.len_right() == 0
     }
 
-    /// Removes all pairs for the set while keeping the backing memory allocated
+    /// Removes all items for the map while keeping the backing memory allocated for reuse.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::PartialCycleMap;
+    ///
+    /// let mut a = PartialCycleMap::new();
+    /// assert!(a.is_empty());
+    /// a.insert(1, "a");
+    /// assert_eq!(a.len_right(), 1);
+    /// assert_eq!(a.len_right(), 1);
+    /// assert!(!a.is_empty());
+    /// a.clear();
+    /// assert!(a.is_empty());
+    /// ```
     pub fn clear(&mut self) {
         self.left_set.clear();
         self.right_set.clear();
@@ -1192,13 +1602,13 @@ where
 }
 
 /// An iterator over the entry pairs of a `PartialCycleMap`.
-pub struct MappedIter<'a, L, R, S> {
+pub struct PairedIter<'a, L, R, S> {
     left_iter: RawIter<MappingPair<L>>,
     right_iter: RawIter<MappingPair<R>>,
     map_ref: &'a PartialCycleMap<L, R, S>,
 }
 
-impl<L, R, S> Clone for MappedIter<'_, L, R, S> {
+impl<L, R, S> Clone for PairedIter<'_, L, R, S> {
     fn clone(&self) -> Self {
         Self {
             left_iter: self.left_iter.clone(),
@@ -1208,7 +1618,7 @@ impl<L, R, S> Clone for MappedIter<'_, L, R, S> {
     }
 }
 
-impl<L, R, S> fmt::Debug for MappedIter<'_, L, R, S>
+impl<L, R, S> fmt::Debug for PairedIter<'_, L, R, S>
 where
     L: Hash + Eq + fmt::Debug,
     R: Hash + Eq + fmt::Debug,
@@ -1219,7 +1629,7 @@ where
     }
 }
 
-impl<'a, L, R, S> Iterator for MappedIter<'a, L, R, S>
+impl<'a, L, R, S> Iterator for PairedIter<'a, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1249,7 +1659,7 @@ where
     }
 }
 
-impl<'a, L, R, S> ExactSizeIterator for MappedIter<'a, L, R, S>
+impl<'a, L, R, S> ExactSizeIterator for PairedIter<'a, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1260,7 +1670,7 @@ where
     }
 }
 
-impl<L, R, S> FusedIterator for MappedIter<'_, L, R, S>
+impl<L, R, S> FusedIterator for PairedIter<'_, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1269,13 +1679,13 @@ where
 }
 
 /// An iterator over the entry pairs of a `PartialCycleMap`.
-pub struct UnmappedIter<'a, L, R, S> {
+pub struct UnpairedIter<'a, L, R, S> {
     left_iter: RawIter<MappingPair<L>>,
     right_iter: RawIter<MappingPair<R>>,
     map_ref: &'a PartialCycleMap<L, R, S>,
 }
 
-impl<L, R, S> Clone for UnmappedIter<'_, L, R, S> {
+impl<L, R, S> Clone for UnpairedIter<'_, L, R, S> {
     fn clone(&self) -> Self {
         Self {
             left_iter: self.left_iter.clone(),
@@ -1285,7 +1695,7 @@ impl<L, R, S> Clone for UnmappedIter<'_, L, R, S> {
     }
 }
 
-impl<L, R, S> fmt::Debug for UnmappedIter<'_, L, R, S>
+impl<L, R, S> fmt::Debug for UnpairedIter<'_, L, R, S>
 where
     L: Hash + Eq + fmt::Debug,
     R: Hash + Eq + fmt::Debug,
@@ -1296,7 +1706,7 @@ where
     }
 }
 
-impl<'a, L, R, S> Iterator for UnmappedIter<'a, L, R, S>
+impl<'a, L, R, S> Iterator for UnpairedIter<'a, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1329,7 +1739,7 @@ where
     }
 }
 
-impl<'a, L, R, S> ExactSizeIterator for UnmappedIter<'a, L, R, S>
+impl<'a, L, R, S> ExactSizeIterator for UnpairedIter<'a, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1340,7 +1750,7 @@ where
     }
 }
 
-impl<L, R, S> FusedIterator for UnmappedIter<'_, L, R, S>
+impl<L, R, S> FusedIterator for UnpairedIter<'_, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1405,9 +1815,35 @@ impl<T> FusedIterator for SingleIter<'_, T> where T: Hash + Eq {}
 
 /// An iterator over the entry pairs of a `PartialCycleMap`.
 #[allow(missing_debug_implementations)]
-pub struct DrainIter<'a, L, R> {
+pub struct DrainIter<'a, L, R>
+where
+    L: Eq + Hash,
+    R: Eq + Hash,
+{
     left_iter: RawDrain<'a, MappingPair<L>>,
     right_ref: &'a mut RawTable<MappingPair<R>>,
+}
+
+impl<'a, L, R> Drop for DrainIter<'a, L, R>
+where
+    L: Eq + Hash,
+    R: Eq + Hash,
+{
+    fn drop(&mut self) {
+        while let Some(item) = self.next() {
+            let guard = ConsumeAllOnDrop(self);
+            drop(item);
+            mem::forget(guard);
+        }
+    }
+}
+
+pub(super) struct ConsumeAllOnDrop<'a, T: Iterator>(pub(super) &'a mut T);
+
+impl<T: Iterator> Drop for ConsumeAllOnDrop<'_, T> {
+    fn drop(&mut self) {
+        self.0.for_each(drop)
+    }
 }
 
 impl<'a, L, R> Iterator for DrainIter<'a, L, R>
@@ -1484,14 +1920,6 @@ where
             drop(item);
             mem::forget(guard);
         }
-    }
-}
-
-pub(super) struct ConsumeAllOnDrop<'a, T: Iterator>(pub(super) &'a mut T);
-
-impl<T: Iterator> Drop for ConsumeAllOnDrop<'_, T> {
-    fn drop(&mut self) {
-        self.0.for_each(drop)
     }
 }
 

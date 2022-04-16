@@ -134,12 +134,9 @@ where
 {
     /// Adds a pair of items to the map.
     ///
-    /// Should the left element be equal to another left element, the old pair is removed and
-    /// returned. The same goes for the right element.
-    ///
-    /// There is a chance for collision here. Collision occurs when the map contains elements with
-    /// identical hashes as the given left and right elements, and they are paired to each other.
-    /// In such a case, the old pair is returned and the new pair is inserted.
+    /// Should the left element be equal to another left element, the pair containing the old left
+    /// item is removed and returned. The same goes for the new right element.
+    /// 
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
@@ -1066,11 +1063,11 @@ impl<L, R, S> CycleMap<L, R, S> {
     /// ```rust
     /// use cycle_map::CycleMap;
     ///
-    /// let mut a = CycleMap::new();
-    /// assert!(a.is_empty());
-    /// a.insert(1, "a");
-    /// assert_eq!(a.len(), 1);
-    /// assert!(!a.is_empty());
+    /// let mut map = CycleMap::new();
+    /// assert!(map.is_empty());
+    /// map.insert(1, "1");
+    /// assert_eq!(map.len(), 1);
+    /// assert!(!map.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1082,13 +1079,13 @@ impl<L, R, S> CycleMap<L, R, S> {
     /// ```rust
     /// use cycle_map::CycleMap;
     ///
-    /// let mut a = CycleMap::new();
-    /// assert!(a.is_empty());
-    /// a.insert(1, "a");
-    /// assert_eq!(a.len(), 1);
-    /// assert!(!a.is_empty());
-    /// a.clear();
-    /// assert!(a.is_empty());
+    /// let mut map = CycleMap::new();
+    /// assert!(map.is_empty());
+    /// map.insert(1, "1");
+    /// assert_eq!(map.len(), 1);
+    /// assert!(!map.is_empty());
+    /// map.clear();
+    /// assert!(map.is_empty());
     /// ```
     pub fn clear(&mut self) {
         self.left_set.clear();

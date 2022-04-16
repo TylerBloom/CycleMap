@@ -61,7 +61,7 @@ mod tests {
         }
         assert_eq!(map.len_left(), 100);
         assert_eq!(map.len_right(), 100);
-        for (val, s) in map.iter_mapped() {
+        for (val, s) in map.iter_paired() {
             assert_eq!(val.to_string(), *s);
             assert_eq!(str::parse::<u64>(s).expect("Unreachable"), *val);
             println!("{val}, {s}");
@@ -271,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn retain_mapped_test() {
+    fn retain_paired_test() {
         let mut map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
         for i in 0..100 {
             if i < 34 {
@@ -287,7 +287,7 @@ mod tests {
         }
         assert_eq!(map.len_left(), 67);
         assert_eq!(map.len_right(), 67);
-        map.retain_mapped(|l, _| *l % 2 == 0);
+        map.retain_paired(|l, _| *l % 2 == 0);
         assert_eq!(map.len_left(), 50);
         assert_eq!(map.len_right(), 50);
         for op in map.iter() {
@@ -302,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn retain_unmapped_test() {
+    fn retain_unpaired_test() {
         let mut map: PartialCycleMap<u64, String> = PartialCycleMap::with_capacity(100);
         for i in 0..100 {
             if i < 34 {
@@ -318,7 +318,7 @@ mod tests {
         }
         assert_eq!(map.len_left(), 67);
         assert_eq!(map.len_right(), 67);
-        map.retain_unmapped(|op| {
+        map.retain_unpaired(|op| {
             if let Some(l) = op.get_left() {
                 *l % 2 == 0
             } else {
@@ -376,10 +376,10 @@ mod tests {
     }
 
     #[test]
-    fn mapped_iter_tests() {
-        // Mapped iter
+    fn paired_iter_tests() {
+        // paired iter
         let map = construct_default_map();
-        let iter = map.iter_mapped();
+        let iter = map.iter_paired();
         println!("{iter:?}");
         assert_eq!(iter.len(), 10);
         assert_eq!(iter.clone().len(), 10);
@@ -389,7 +389,7 @@ mod tests {
             map
         );
         let map = construct_unpaired_map();
-        let iter = map.iter_mapped();
+        let iter = map.iter_paired();
         println!("{iter:?}");
         assert_eq!(iter.len(), 0);
         assert_eq!(iter.clone().len(), 0);
@@ -401,10 +401,10 @@ mod tests {
     }
 
     #[test]
-    fn unmapped_iter_tests() {
-        // Unmapped iter
+    fn unpaired_iter_tests() {
+        // Unpaired iter
         let map = construct_unpaired_map();
-        let iter = map.iter_unmapped();
+        let iter = map.iter_unpaired();
         println!("{iter:?}");
         assert_eq!(iter.len(), 20);
         assert_eq!(iter.clone().len(), 20);
@@ -414,7 +414,7 @@ mod tests {
             map
         );
         let map = construct_default_map();
-        let iter = map.iter_unmapped();
+        let iter = map.iter_unpaired();
         println!("{iter:?}");
         assert_eq!(iter.len(), 0);
         assert_eq!(iter.clone().len(), 0);
@@ -436,9 +436,9 @@ mod tests {
         }
         for i in 0..10 {
             if i < 5 {
-                assert!(map.are_mapped(&i.to_string(), &TestingStruct::from_value(i)));
+                assert!(map.are_paired(&i.to_string(), &TestingStruct::from_value(i)));
             } else {
-                assert!(!map.are_mapped(&i.to_string(), &TestingStruct::from_value(i)));
+                assert!(!map.are_paired(&i.to_string(), &TestingStruct::from_value(i)));
             }
         }
     }
@@ -452,23 +452,23 @@ mod tests {
                 Neither
             );
         }
-        assert!((0..5).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
         for i in 0..5 {
             assert_eq!(
                 map.pair_forced(&i.to_string(), &TestingStruct::from_value(i + 5)),
                 SomeRight(&TestingStruct::from_value(i))
             );
         }
-        assert!((0..5).all(|i| !map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
-        assert!((0..5).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i + 5))));
+        assert!((0..5).all(|i| !map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i + 5))));
         for i in 5..10 {
             assert_eq!(
                 map.pair_forced(&i.to_string(), &TestingStruct::from_value(i)),
                 SomeLeft(&(i - 5).to_string())
             );
         }
-        assert!((0..5).all(|i| !map.are_mapped(&i.to_string(), &TestingStruct::from_value(i + 5))));
-        assert!((5..10).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| !map.are_paired(&i.to_string(), &TestingStruct::from_value(i + 5))));
+        assert!((5..10).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
         for i in 0..10 {
             map.pair_forced(&i.to_string(), &TestingStruct::from_value(i));
         }
@@ -478,8 +478,8 @@ mod tests {
                 SomeBoth(&(i + 5).to_string(), &TestingStruct::from_value(i))
             );
         }
-        assert!((0..5).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i + 5))));
-        assert!((0..10).all(|i| !map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i + 5))));
+        assert!((0..10).all(|i| !map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
         assert!((5..10).all(|i| !map.is_left_paired(&i.to_string())));
         assert!((0..5).all(|i| !map.is_right_paired(&TestingStruct::from_value(i))));
     }
@@ -493,23 +493,23 @@ mod tests {
                 Neither
             );
         }
-        assert!((0..5).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
         for i in 0..5 {
             assert_eq!(
                 map.pair_forced_remove(&i.to_string(), &TestingStruct::from_value(i + 5)),
                 SomeRight(TestingStruct::from_value(i))
             );
         }
-        assert!((0..5).all(|i| !map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
-        assert!((0..5).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i + 5))));
+        assert!((0..5).all(|i| !map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i + 5))));
         for i in 5..10 {
             assert_eq!(
                 map.pair_forced_remove(&i.to_string(), &TestingStruct::from_value(i)),
                 SomeLeft((i - 5).to_string())
             );
         }
-        assert!((0..5).all(|i| !map.are_mapped(&i.to_string(), &TestingStruct::from_value(i + 5))));
-        assert!((5..10).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| !map.are_paired(&i.to_string(), &TestingStruct::from_value(i + 5))));
+        assert!((5..10).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
         println!("New map");
         let mut map = construct_unpaired_map();
         for i in 0..10 {
@@ -521,8 +521,8 @@ mod tests {
                 SomeBoth((i + 5).to_string(), TestingStruct::from_value(i))
             );
         }
-        assert!((0..5).all(|i| map.are_mapped(&i.to_string(), &TestingStruct::from_value(i + 5))));
-        assert!((0..10).all(|i| !map.are_mapped(&i.to_string(), &TestingStruct::from_value(i))));
+        assert!((0..5).all(|i| map.are_paired(&i.to_string(), &TestingStruct::from_value(i + 5))));
+        assert!((0..10).all(|i| !map.are_paired(&i.to_string(), &TestingStruct::from_value(i))));
         assert!((5..10).all(|i| !map.is_left_paired(&i.to_string())));
         assert!((0..5).all(|i| !map.is_right_paired(&TestingStruct::from_value(i))));
     }
@@ -599,7 +599,74 @@ mod tests {
     #[test]
     fn misc_tests() {
         let map = construct_default_map();
-        assert!(!map.are_mapped(&"0".to_string(), &TestingStruct::from_value(1)));
+        assert!(!map.are_paired(&"0".to_string(), &TestingStruct::from_value(1)));
+    }
+
+    #[test]
+    fn shrink_tests() {
+        let mut map: PartialCycleMap<i32, i32> = PartialCycleMap::with_capacity(100);
+        let cap = (map.capacity_left(), map.capacity_right());
+        map.insert(1, 2);
+        map.insert(3, 4);
+        assert_eq!(map.capacity_left(), cap.0);
+        assert_eq!(map.capacity_right(), cap.1);
+        map.shrink_to_left(10);
+        map.shrink_to_right(10);
+        assert!(map.capacity_left() >= 10);
+        assert!(map.capacity_left() <= cap.1);
+        assert!(map.capacity_right() >= 10);
+        assert!(map.capacity_right() <= cap.1);
+        map.shrink_to_left(0);
+        assert!(map.capacity_left() >= 2);
+        assert!(map.capacity_left() <= cap.0);
+        map.shrink_to_right(0);
+        assert!(map.capacity_right() >= 2);
+        assert!(map.capacity_right() <= cap.1);
+        map.shrink_to_left(10);
+        assert!(map.capacity_left() >= 2);
+        assert!(map.capacity_left() <= cap.0);
+        map.shrink_to_right(10);
+        assert!(map.capacity_right() >= 2);
+        assert!(map.capacity_right() <= cap.1);
+        let mut map: PartialCycleMap<i32, i32> = PartialCycleMap::with_capacity(100);
+        let cap = (map.capacity_left(), map.capacity_right());
+        map.insert(1, 2);
+        map.insert(3, 4);
+        assert_eq!(map.capacity_left(), cap.0);
+        assert_eq!(map.capacity_right(), cap.1);
+        assert!(map.capacity_left() >= 10);
+        assert!(map.capacity_left() <= cap.1);
+        assert!(map.capacity_right() >= 10);
+        assert!(map.capacity_right() <= cap.1);
+        map.shrink_to_fit();
+        assert!(map.capacity_left() >= 2);
+        assert!(map.capacity_left() <= 10);
+        assert!(map.capacity_right() >= 2);
+        assert!(map.capacity_right() <= 10);
+    }
+
+    #[test]
+    fn reserve_tests() {
+        let mut map: PartialCycleMap<&str, i32> = PartialCycleMap::new();
+        let old_cap = (map.capacity_left(), map.capacity_right());
+        assert_eq!(old_cap.0, 0);
+        map.reserve_left(10);
+        assert!(old_cap.0 != map.capacity_left());
+        assert_eq!(old_cap.1, 0);
+        map.reserve_right(10);
+        assert!(old_cap.1 != map.capacity_right());
+
+        use cycle_map::PartialCycleMap;
+        let mut map: PartialCycleMap<&str, i32> = PartialCycleMap::new();
+        let old_cap = (map.capacity_left(), map.capacity_right());
+        assert_eq!(old_cap.0, 0);
+        let res = map.try_reserve_left(10);
+        assert!(res.is_ok());
+        assert!(old_cap.0 != map.capacity_left());
+        assert_eq!(old_cap.1, 0);
+        let res = map.try_reserve_right(10);
+        assert!(res.is_ok());
+        assert!(old_cap.1 != map.capacity_right());
     }
 
     #[test]

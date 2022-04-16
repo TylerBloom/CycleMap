@@ -288,6 +288,51 @@ mod tests {
         assert_eq!(map.clone(), construct_default_map());
         assert_eq!(construct_default_map(), construct_default_map());
     }
+    
+    #[test]
+    fn shrink_tests() {
+        let mut map: CycleMap<i32, i32> = CycleMap::with_capacity(100);
+        let cap = map.capacity();
+        map.insert(1, 2);
+        map.insert(3, 4);
+        assert_eq!(map.capacity(), cap);
+        map.shrink_to(10);
+        assert!(map.capacity() >= 10);
+        assert!(map.capacity() <= cap);
+        map.shrink_to(0);
+        assert!(map.capacity() >= 2);
+        assert!(map.capacity() <= cap);
+        map.shrink_to(10);
+        assert!(map.capacity() >= 2);
+        assert!(map.capacity() <= cap);
+        let mut map: CycleMap<i32, i32> = CycleMap::with_capacity(100);
+        let cap = map.capacity();
+        map.insert(1, 2);
+        map.insert(3, 4);
+        assert_eq!(map.capacity(), cap);
+        assert!(map.capacity() >= 10);
+        assert!(map.capacity() <= cap);
+        map.shrink_to_fit();
+        assert!(map.capacity() >= 2);
+        assert!(map.capacity() <= 10);
+    }
+    
+    #[test]
+    fn reserve_tests() {
+        let mut map: CycleMap<&str, i32> = CycleMap::new();
+        let old_cap = map.capacity();
+        assert_eq!(old_cap, 0);
+        map.reserve(10);
+        assert!(old_cap != map.capacity());
+
+        use cycle_map::CycleMap;
+        let mut map: CycleMap<&str, i32> = CycleMap::new();
+        let old_cap = map.capacity();
+        assert_eq!(old_cap, 0);
+        let res = map.try_reserve(10);
+        assert!(res.is_ok());
+        assert!(old_cap != map.capacity());
+    }
 
     #[test]
     fn fmt_tests() {

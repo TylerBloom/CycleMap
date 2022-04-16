@@ -9,8 +9,8 @@
 //!
 //! This crate contains four different maps. There are two kinds of maps for mapping pairs of items
 //! (i.e. one-to-one). One map, [`CycleMap`], forces every item to be paired. The other,
-//! [`PartialCycleMap`] allows for items to be unpaired. The other two, `MultiCycleMap` and
-//! `PartialMultiCycleMap`, work similarly but are many-to-one maps.
+//! [`PartialCycleMap`] allows for items to be unpaired. The other two, [`GroupMap`] and
+//! `PartialGroupMap`, work similarly but are many-to-one maps.
 //!
 //! CycleMap is build on top of [`hashbrown`]. All maps use its default hashing algorithm, but
 //! different hashing algorithms can be specified on creation of any map.
@@ -30,9 +30,9 @@ pub mod partial_cycle_map;
 pub use crate::partial_cycle_map::PartialCycleMap;
 
 /// A strick many-to-one map
-pub mod multi_cycle_map;
+pub mod group_map;
 /// A strick many-to-one map
-pub use crate::multi_cycle_map::MultiCycleMap;
+pub use crate::group_map::GroupMap;
 
 /// Enums similar to Option
 pub mod optionals;

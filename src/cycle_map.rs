@@ -1081,7 +1081,6 @@ impl<L, R, S> CycleMap<L, R, S> {
     /// let mut map = CycleMap::new();
     /// assert!(map.is_empty());
     /// map.insert(1, "1");
-    /// assert_eq!(map.len(), 1);
     /// assert!(!map.is_empty());
     /// map.clear();
     /// assert!(map.is_empty());

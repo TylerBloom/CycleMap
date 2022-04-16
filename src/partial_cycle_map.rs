@@ -95,7 +95,6 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// // Bring items together!
 /// assert!(converter.pair(&"three", &3));
 /// assert!(converter.are_paired(&"three", &3));
-///
 /// ```
 pub struct PartialCycleMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
@@ -1428,18 +1427,10 @@ where
         for op in self.iter() {
             if f(&op) {
                 let (left, right): (Option<&L>, Option<&R>) = op.into();
-                let l_hash: Option<u64> = if left.is_some() {
-                    Some(make_hash::<L, S>(&self.hash_builder, left.unwrap()))
-                } else {
-                    None
-                };
-                let r_hash: Option<u64> = if right.is_some() {
-                    Some(make_hash::<R, S>(&self.hash_builder, right.unwrap()))
-                } else {
-                    None
-                };
-                let id = if left.is_some() {
-                    self.get_left_inner(left.unwrap()).unwrap().id
+                let l_hash = left.map(|l| make_hash::<L, S>(&self.hash_builder, l));
+                let r_hash = right.map(|r| make_hash::<R, S>(&self.hash_builder, r));
+                let id = if let Some(l) = left {
+                    self.get_left_inner(l).unwrap().id
                 } else {
                     self.get_right_inner(right.unwrap()).unwrap().id
                 };
@@ -1907,14 +1898,12 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
     /// ```rust
     /// use cycle_map::PartialCycleMap;
     ///
-    /// let mut a = PartialCycleMap::new();
-    /// assert!(a.is_empty());
-    /// a.insert(1, "a");
-    /// assert_eq!(a.len_right(), 1);
-    /// assert_eq!(a.len_right(), 1);
-    /// assert!(!a.is_empty());
-    /// a.clear();
-    /// assert!(a.is_empty());
+    /// let mut map = PartialCycleMap::new();
+    /// assert!(map.is_empty());
+    /// map.insert(1, "a");
+    /// assert!(!map.is_empty());
+    /// map.clear();
+    /// assert!(map.is_empty());
     /// ```
     pub fn clear(&mut self) {
         self.left_set.clear();

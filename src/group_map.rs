@@ -168,6 +168,50 @@ where
     R: Eq + Hash,
     S: BuildHasher,
 {
+    /// Inserts the given pair. If left is already in the left set, it is remapped to the givrn
+    /// right item. Similarly, if right is in the right set, the left item is added to left set and
+    /// paired with right. If both items are already in the map, they are similar paired.
+    pub fn insert(&mut self, left: L, right: R) {
+        let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
+        let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
+        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(&left));
+        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(&right));
+        match (opt_left, opt_right) {
+            (None, None) => {
+                let left_item = LeftItem { value: left, hash: r_hash, id: self.counter };
+                self.left_set.insert(l_hash, left_item, make_hasher(&self.hash_builder));
+                let mut set = HashSet::with_capacity(1);
+                set.insert((l_hash, self.counter));
+                self.counter += 1;
+                let right_item = RightItem { value: right, pairs: set, id: self.counter };
+                self.right_set.insert(l_hash, right_item, make_hasher(&self.hash_builder));
+                self.counter += 1;
+            },
+            (Some(l), None) => {
+                l.hash = r_hash;
+                let r = self.right_set.get_mut(r_hash, right_just_id(l.id)).unwrap();
+                r.pairs.remove(&(l_hash, l.id));
+                let mut set = HashSet::with_capacity(1);
+                set.insert((l_hash, l.id));
+                let right_item = RightItem { value: right, pairs: set, id: self.counter };
+                self.right_set.insert(l_hash, right_item, make_hasher(&self.hash_builder));
+                self.counter += 1;
+            }
+            (None, Some(r)) => {
+                r.pairs.insert((l_hash, self.counter));
+                let left_item = LeftItem { value: left, hash: r_hash, id: self.counter };
+                self.left_set.insert(l_hash, left_item, make_hasher(&self.hash_builder));
+                self.counter += 1;
+            },
+            (Some(l), Some(r)) => {
+                r.pairs.insert((l_hash, l.id));
+                let r = self.right_set.get_mut(l.hash, right_hash_and_id(&(l_hash, l.id))).unwrap();
+                r.pairs.remove(&(l_hash, l.id));
+                l.hash = r_hash;
+            },
+        }
+    }
+
     /// Adds a pair of items to the map.
     ///
     /// Should the left element be equal to another left element, the old pair is removed and
@@ -178,7 +222,7 @@ where
     /// In such a case, the old pair is returned and the new pair is inserted.
     /// 
     /// TODO: This should just pair thing in-place... Nothing should be removed
-    pub fn insert(&mut self, left: L, right: R) -> (Option<L>, Option<(Vec<L>, R)>) {
+    pub fn insert_remove(&mut self, left: L, right: R) -> (Option<L>, Option<(Vec<L>, R)>) {
         let opt_from_left = self.remove_left(&left);
         let opt_from_right = self.remove_right(&right);
         let digest = (opt_from_left, opt_from_right);
@@ -263,6 +307,53 @@ where
             make_hasher::<RightItem<R>, S>(&self.hash_builder),
         );
         digest
+    }
+    
+    /// Inserts the given `new` right item and repairs all items paired with the `old` item with
+    /// the `new` item.
+    pub fn swap_right(&mut self, old: &R, new: R) {
+        let old_hash = make_hash::<R, S>(&self.hash_builder, old);
+        match self.right_set.get_mut(old_hash, equivalent_key(old)) {
+            None => {
+                self.insert_right(new);
+            },
+            Some(r) => {
+                let set: HashSet<(u64, u64)> = r.pairs.drain().collect();
+                let new_hash = make_hash::<R, S>(&self.hash_builder, &new);
+                let item = RightItem { value: new, pairs: set.clone(), id: self.counter };
+                self.right_set.insert(new_hash, item, make_hasher(&self.hash_builder));
+                self.counter += 1;
+                for (hash, id) in set {
+                    self.left_set.get_mut(hash, left_just_id(id)).unwrap().hash = new_hash;
+                }
+            }
+        }
+    }
+    
+    /// Removes the given `old` right item, inserts the given `new` right item, and repairs all
+    /// items paired with the `old` item with the `new` item.
+    /// 
+    /// If the `old` item isn't in the map, `None` is returned. Otherwise, the `old` value is
+    /// returned.
+    pub fn swap_right_remove(&mut self, old: &R, new: R) -> Option<R> {
+        let old_hash = make_hash::<R, S>(&self.hash_builder, old);
+        match self.right_set.remove_entry(old_hash, equivalent_key(old)) {
+            None => {
+                self.insert_right(new);
+                None
+            },
+            Some(mut r) => {
+                let set: HashSet<(u64, u64)> = r.pairs.drain().collect();
+                let new_hash = make_hash::<R, S>(&self.hash_builder, &new);
+                let item = RightItem { value: new, pairs: set.clone(), id: self.counter };
+                self.right_set.insert(new_hash, item, make_hasher(&self.hash_builder));
+                self.counter += 1;
+                for (hash, id) in set {
+                    self.left_set.get_mut(hash, left_just_id(id)).unwrap().hash = new_hash;
+                }
+                Some(r.value)
+            }
+        }
     }
 
     /// Pairs two existing items in the map. Returns `true` if they were successfully paired.

@@ -36,10 +36,10 @@ mod tests {
     }
 
     #[test]
-    fn insert_test() {
+    fn insert_remove_test() {
         let mut map: GroupMap<u64, String> = GroupMap::with_capacity(100);
         for i in 0..100 {
-            let opt = map.insert(i, i.to_string());
+            let opt = map.insert_remove(i, i.to_string());
             assert_eq!(opt, (None, None));
         }
         assert_eq!(map.len_left(), 100);
@@ -100,7 +100,7 @@ mod tests {
         let mut map: GroupMap<u64, String> = GroupMap::with_capacity(100);
         for i in 0..100 {
             if i < 50 {
-                let opt = map.insert(i, i.to_string());
+                let opt = map.insert_remove(i, i.to_string());
                 assert_eq!(opt, (None, None));
             } else {
                 let opt = map.insert_right(i.to_string());
@@ -119,7 +119,7 @@ mod tests {
         let mut map: GroupMap<u64, String> = GroupMap::with_capacity(100);
         for i in 0..100 {
             if i < 50 {
-                let opt = map.insert(i, i.to_string());
+                let opt = map.insert_remove(i, i.to_string());
                 assert_eq!(opt, (None, None));
             } else {
                 let opt = map.insert_right(i.to_string());
@@ -144,7 +144,7 @@ mod tests {
         let mut map: GroupMap<u64, String> = GroupMap::with_capacity(100);
         for i in 0..100 {
             if i < 50 {
-                let opt = map.insert(i, i.to_string());
+                let opt = map.insert_remove(i, i.to_string());
                 assert_eq!(opt, (None, None));
             } else {
                 let opt = map.insert_right(i.to_string());
@@ -191,10 +191,11 @@ mod tests {
     }
 
     #[test]
-    fn paired_iter_tests() {
+    fn _paired_iter_tests() {
         // paired iter
         let map = construct_default_map();
         let iter = map.iter_paired();
+        println!("{map:?}");
         println!("{iter:?}");
         assert_eq!(iter.len(), 10);
         assert_eq!(iter.clone().len(), 10);

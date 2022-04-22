@@ -4,6 +4,7 @@ use std::{
     hash::{BuildHasher, Hash},
     iter::FusedIterator,
     marker::PhantomData,
+    ops::AddAssign,
 };
 
 use hashbrown::{
@@ -24,34 +25,45 @@ pub(crate) fn equivalent_key<T: PartialEq<Q>, Q: PartialEq + ?Sized>(
     move |x| x.eq(k)
 }
 
-pub(crate) fn left_with_right_id<T: PartialEq + ?Sized>(id: u64) -> impl Fn(&LeftItem<T>) -> bool {
-    move |x| x.r_id == id
+pub(crate) fn left_with_left_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&LeftItem<T>) -> bool {
+    move |x| x.id == id
 }
 
-pub(crate) fn right_with_left_hash<'a, T: PartialEq + ?Sized>(
-    hash: u64,
+/*
+pub(crate) fn left_with_right_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&LeftItem<T>) -> bool {
+    move |x| x.r_id == id
+}
+*/
+
+pub(crate) fn right_with_left_pair<'a, T: PartialEq + ?Sized>(
+    pair: &'a (u64, ID),
 ) -> impl Fn(&RightItem<T>) -> bool + 'a {
-    move |x| x.hashes.contains(&hash)
+    move |x| x.pairs.contains(pair)
 }
 
 pub(crate) fn right_with_right_id<'a, T: PartialEq + ?Sized>(
-    id: u64,
+    id: ID,
 ) -> impl Fn(&RightItem<T>) -> bool + 'a {
     move |x| x.id == id
 }
+
+// It is fair too easy to switch hashes and ids by accident. Let's fix that.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub(crate) struct ID(u64);
 
 // Contains a value and the hash of the item that the value maps to.
 pub(crate) struct LeftItem<T> {
     pub(crate) value: T,
     pub(crate) hash: u64,
-    pub(crate) r_id: u64,
+    pub(crate) r_id: ID,
+    pub(crate) id: ID,
 }
 
 // Contains a value and the hash of the item that the value maps to.
 pub(crate) struct RightItem<T> {
     pub(crate) value: T,
-    pub(crate) hashes: HashSet<u64>, // Hashes of the paired left items
-    pub(crate) id: u64, // Right items don't have to be paired, so an id is needed
+    pub(crate) pairs: HashSet<(u64, ID)>, // (hash, id) of the paired left items
+    pub(crate) id: ID,                    // Right items don't have to be paired, so an id is needed
 }
 
 /// A hash map implementation that allows bi-directional, near-constant time lookups.
@@ -134,7 +146,8 @@ pub(crate) struct RightItem<T> {
 /// [`surjectively`]: https://en.wikipedia.org/wiki/Surjective_function
 pub struct GroupMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
-    pub(crate) counter: u64,
+    pub(crate) left_counter: ID,
+    pub(crate) right_counter: ID,
     left_set: RawTable<LeftItem<L>>,
     right_set: RawTable<RightItem<R>>,
 }
@@ -155,7 +168,7 @@ impl<L, R> GroupMap<L, R, DefaultHashBuilder> {
 
 impl<L, R, S> GroupMap<L, R, S>
 where
-    L: Eq + Hash,
+    L: Eq + Hash ,
     R: Eq + Hash,
     S: BuildHasher,
 {
@@ -172,57 +185,65 @@ where
                 let left_item = LeftItem {
                     value: left,
                     hash: r_hash,
-                    r_id: self.counter,
+                    r_id: self.right_counter,
+                    id: self.left_counter,
                 };
                 self.left_set
                     .insert(l_hash, left_item, make_hasher(&self.hash_builder));
                 let mut set = HashSet::with_capacity(1);
-                set.insert(l_hash);
+                set.insert((l_hash, self.left_counter));
                 let right_item = RightItem {
                     value: right,
-                    hashes: set,
-                    id: self.counter,
+                    pairs: set,
+                    id: self.right_counter,
                 };
                 self.right_set
-                    .insert(l_hash, right_item, make_hasher(&self.hash_builder));
-                self.counter += 1;
+                    .insert(r_hash, right_item, make_hasher(&self.hash_builder));
+                self.left_counter.0 += 1;
+                self.right_counter.0 += 1;
             }
             (Some(l), None) => {
                 l.hash = r_hash;
+                let pair = (l_hash, l.id);
                 let r = self
                     .right_set
-                    .get_mut(r_hash, right_with_left_hash(l_hash))
+                    .get_mut(r_hash, right_with_left_pair(&pair))
                     .unwrap();
-                r.hashes.remove(&l_hash);
+                r.pairs.remove(&pair);
                 let mut set = HashSet::with_capacity(1);
-                set.insert(l_hash);
+                set.insert(pair);
                 let right_item = RightItem {
                     value: right,
-                    hashes: set,
-                    id: self.counter,
+                    pairs: set,
+                    id: self.right_counter,
                 };
                 self.right_set
-                    .insert(l_hash, right_item, make_hasher(&self.hash_builder));
-                self.counter += 1;
+                    .insert(r_hash, right_item, make_hasher(&self.hash_builder));
+                self.right_counter.0 += 1;
             }
             (None, Some(r)) => {
-                r.hashes.insert(l_hash);
+                r.pairs.insert((l_hash, self.left_counter));
                 let left_item = LeftItem {
                     value: left,
                     hash: r_hash,
+                    id: self.left_counter,
                     r_id: r.id,
                 };
                 self.left_set
                     .insert(l_hash, left_item, make_hasher(&self.hash_builder));
+                self.left_counter.0 += 1;
             }
             (Some(l), Some(r)) => {
-                r.hashes.insert(l_hash);
+                let pair = (l_hash, l.id);
+                r.pairs.insert(pair.clone());
+                let new_r_id = r.id;
                 let r = self
                     .right_set
                     .get_mut(l.hash, right_with_right_id(l.r_id))
                     .unwrap();
-                r.hashes.remove(&l_hash);
+                r.pairs.remove(&pair);
                 l.hash = r_hash;
+                l.id = new_r_id;
             }
         }
     }
@@ -246,25 +267,27 @@ where
         let left_item = LeftItem {
             value: left,
             hash: r_hash,
-            r_id: self.counter + 1,
+            id: self.left_counter,
+            r_id: self.right_counter,
         };
         let mut set = HashSet::with_capacity(1);
-        set.insert(l_hash);
+        set.insert((l_hash, self.left_counter));
         let right_item = RightItem {
             value: right,
-            hashes: set,
-            id: self.counter,
+            pairs: set,
+            id: self.right_counter,
         };
-        self.counter += 1;
+        self.left_counter.0 += 1;
+        self.right_counter.0 += 1;
         self.left_set.insert(
             l_hash,
             left_item,
-            make_hasher::<LeftItem<L>, S>(&self.hash_builder),
+            make_hasher(&self.hash_builder),
         );
         self.right_set.insert(
             r_hash,
             right_item,
-            make_hasher::<RightItem<R>, S>(&self.hash_builder),
+            make_hasher(&self.hash_builder),
         );
         digest
     }
@@ -282,13 +305,15 @@ where
         let right_item = self.right_set.get_mut(r_hash, equivalent_key(right))?;
         let right_id = right_item.id;
         let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
-        right_item.hashes.insert(l_hash);
+        right_item.pairs.insert((l_hash, self.left_counter));
         let digest = self.remove_left(&left);
         let left_item = LeftItem {
             value: left,
             hash: r_hash,
+            id: self.left_counter,
             r_id: right_id,
         };
+        self.left_counter += 1;
         self.left_set.insert(
             l_hash,
             left_item,
@@ -311,10 +336,10 @@ where
         let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
         let right_item = RightItem {
             value: right,
-            hashes: HashSet::new(),
-            id: self.counter,
+            pairs: HashSet::new(),
+            id: self.right_counter,
         };
-        self.counter += 1;
+        self.right_counter += 1;
         self.right_set.insert(
             r_hash,
             right_item,
@@ -332,19 +357,19 @@ where
                 self.insert_right(new);
             }
             Some(r) => {
-                let set: HashSet<u64> = r.hashes.drain().collect();
+                let set: HashSet<(u64, ID)> = r.pairs.drain().collect();
                 let new_hash = make_hash::<R, S>(&self.hash_builder, &new);
                 let item = RightItem {
                     value: new,
-                    hashes: set.clone(),
-                    id: self.counter,
+                    pairs: set.clone(),
+                    id: self.right_counter,
                 };
                 self.right_set
                     .insert(new_hash, item, make_hasher(&self.hash_builder));
-                self.counter += 1;
-                for hash in set {
+                self.right_counter += 1;
+                for (hash, id) in set {
                     self.left_set
-                        .get_mut(hash, left_with_right_id(r.id))
+                        .get_mut(hash, left_with_left_id(id))
                         .unwrap()
                         .hash = new_hash;
                 }
@@ -365,19 +390,19 @@ where
                 None
             }
             Some(mut r) => {
-                let set: HashSet<u64> = r.hashes.drain().collect();
+                let set: HashSet<(u64, ID)> = r.pairs.drain().collect();
                 let new_hash = make_hash::<R, S>(&self.hash_builder, &new);
                 let item = RightItem {
                     value: new,
-                    hashes: set.clone(),
-                    id: self.counter,
+                    pairs: set.clone(),
+                    id: self.right_counter,
                 };
                 self.right_set
                     .insert(new_hash, item, make_hasher(&self.hash_builder));
-                self.counter += 1;
-                for hash in set {
+                self.right_counter += 1;
+                for (hash, id) in set {
                     self.left_set
-                        .get_mut(hash, left_with_right_id(r.id))
+                        .get_mut(hash, left_with_left_id(id))
                         .unwrap()
                         .hash = new_hash;
                 }
@@ -396,28 +421,29 @@ where
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
         let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
+        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         let (digest, to_remove) = match (opt_left, opt_right) {
-            (Some(left), Some(_)) => {
-                let to_remove = Some((left.hash, left.r_id));
+            (Some(left), Some(r)) => {
+                let to_remove = Some((left.hash, left.r_id, left.id));
                 left.hash = r_hash;
+                left.r_id = r.id;
                 (true, to_remove)
             }
             _ => (false, None),
         };
         // The specified right item is updated here to avoid potential collision should hash ==
         // r_hash
-        if let Some((hash, id)) = to_remove {
+        if let Some(triple) = to_remove {
             let old_right = self
                 .right_set
-                .get_mut(hash, right_with_right_id(id))
+                .get_mut(triple.0, right_with_right_id(triple.1))
                 .unwrap();
-            old_right.hashes.remove(&l_hash);
+            old_right.pairs.remove(&(l_hash, triple.2));
             let new_right = self
                 .right_set
                 .get_mut(r_hash, equivalent_key(right))
                 .unwrap();
-            new_right.hashes.insert(l_hash);
+            new_right.pairs.insert((l_hash, triple.2));
         }
         digest
     }
@@ -429,7 +455,7 @@ where
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match opt_right {
-            Some(r) => r.hashes.is_empty(),
+            Some(r) => r.pairs.is_empty(),
             None => false,
         }
     }
@@ -452,7 +478,7 @@ where
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => {
-                left.hash == r_hash && right.hashes.contains(&l_hash)
+                left.hash == r_hash && right.pairs.contains(&(l_hash, left.id))
             }
             _ => false,
         }
@@ -507,9 +533,9 @@ where
         let left_item = self.left_set.remove_entry(l_hash, equivalent_key(item))?;
         let pair = (l_hash, left_item.id);
         self.right_set
-            .get_mut(left_item.hash, right_with_left_hash(&pair))
+            .get_mut(left_item.hash, right_with_left_pair(&pair))
             .unwrap()
-            .hashes
+            .pairs
             .remove(&pair);
         Some(left_item.extract())
     }
@@ -519,7 +545,7 @@ where
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_item = self.right_set.remove_entry(r_hash, equivalent_key(item))?;
         let left_vec: Vec<L> = right_item
-            .hashes
+            .pairs
             .iter()
             .map(|(h, i)| {
                 self.left_set
@@ -532,12 +558,12 @@ where
     }
 
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
-    fn remove_via_hash_and_id(&mut self, r_hash: u64, id: u64) -> Option<(Vec<L>, R)> {
+    fn remove_via_hash_and_id(&mut self, r_hash: u64, id: ID) -> Option<(Vec<L>, R)> {
         let right = self
             .right_set
             .remove_entry(r_hash, right_with_right_id(id))?;
         let left_vec = right
-            .hashes
+            .pairs
             .iter()
             .map(|(h, i)| {
                 self.left_set
@@ -569,7 +595,7 @@ where
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_item: &RightItem<R> = self.right_set.get(r_hash, equivalent_key(item))?;
         Some(PairIter {
-            iter: right_item.hashes.iter(),
+            iter: right_item.pairs.iter(),
             map_ref: self,
             marker: PhantomData,
         })
@@ -588,10 +614,10 @@ where
     /// ```
     pub fn get_right(&self, item: &L) -> Option<&R> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
-        let left_item: &LeftItem<L> = self.get_left_inner_with_hash(item, l_hash)?;
+        let left_item = self.get_left_inner_with_hash(item, l_hash)?;
         match self.right_set.get(
             left_item.hash,
-            right_with_hash_and_id(&(l_hash, left_item.id)),
+            right_with_right_id(left_item.r_id),
         ) {
             None => None,
             Some(pairing) => Some(&pairing.value),
@@ -656,7 +682,7 @@ where
         F: FnMut(Option<&L>, &R) -> bool,
     {
         // right hash, left id
-        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
+        let mut to_drop: Vec<(u64, ID)> = Vec::with_capacity(self.left_set.len());
         for (opt_l, r) in self.iter() {
             if f(opt_l, r) {
                 let r_hash = make_hash::<R, S>(&self.hash_builder, r);
@@ -676,7 +702,7 @@ where
         F: FnMut(&L, &R) -> bool,
     {
         // right hash, left id
-        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
+        let mut to_drop: Vec<(u64, ID)> = Vec::with_capacity(self.left_set.len());
         for (l, r) in self.iter_paired() {
             if f(l, r) {
                 let r_hash = make_hash::<R, S>(&self.hash_builder, r);
@@ -696,7 +722,7 @@ where
         F: FnMut(&R) -> bool,
     {
         // right hash, left id
-        let mut to_drop: Vec<(u64, u64)> = Vec::with_capacity(self.left_set.len());
+        let mut to_drop: Vec<(u64, ID)> = Vec::with_capacity(self.left_set.len());
         for r in self.iter_unpaired() {
             if f(r) {
                 let r_hash = make_hash::<R, S>(&self.hash_builder, r);
@@ -720,7 +746,8 @@ where
         Self {
             left_set: self.left_set.clone(),
             right_set: self.right_set.clone(),
-            counter: self.counter,
+            left_counter: self.left_counter,
+            right_counter: self.right_counter,
             hash_builder: self.hash_builder.clone(),
         }
     }
@@ -748,7 +775,7 @@ where
 
 impl<L, R, S> PartialEq<GroupMap<L, R, S>> for GroupMap<L, R, S>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -765,7 +792,7 @@ where
 
 impl<L, R, S> Eq for GroupMap<L, R, S>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -776,7 +803,8 @@ impl<L, R, S> GroupMap<L, R, S> {
     pub const fn with_hasher(hash_builder: S) -> Self {
         Self {
             hash_builder,
-            counter: 0,
+            left_counter: ID(0),
+            right_counter: ID(0),
             left_set: RawTable::new(),
             right_set: RawTable::new(),
         }
@@ -786,7 +814,8 @@ impl<L, R, S> GroupMap<L, R, S> {
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
             hash_builder,
-            counter: 0,
+            left_counter: ID(0),
+            right_counter: ID(0),
             left_set: RawTable::with_capacity(capacity),
             right_set: RawTable::with_capacity(capacity),
         }
@@ -861,7 +890,7 @@ impl<L, R, S> GroupMap<L, R, S> {
 
 impl<L, R, S> Extend<(Option<L>, R)> for GroupMap<L, R, S>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -869,11 +898,7 @@ where
     fn extend<T: IntoIterator<Item = (Option<L>, R)>>(&mut self, iter: T) {
         for (left, right) in iter {
             if let Some(l) = left {
-                if self.contains_right(&right) {
-                    self.insert_left(l, &right);
-                } else {
-                    self.insert(l, right);
-                }
+                self.insert(l, right);
             } else {
                 self.insert_right(right);
             }
@@ -883,25 +908,21 @@ where
 
 impl<L, R, S> Extend<(L, R)> for GroupMap<L, R, S>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
     S: BuildHasher,
 {
     #[inline]
     fn extend<T: IntoIterator<Item = (L, R)>>(&mut self, iter: T) {
         for (left, right) in iter {
-            if self.contains_right(&right) {
-                self.insert_left(left, &right);
-            } else {
-                self.insert(left, right);
-            }
+            self.insert(left, right);
         }
     }
 }
 
 impl<L, R> FromIterator<(Option<L>, R)> for GroupMap<L, R>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
 {
     fn from_iter<T: IntoIterator<Item = (Option<L>, R)>>(iter: T) -> Self {
@@ -913,7 +934,7 @@ where
 
 impl<L, R> FromIterator<(L, R)> for GroupMap<L, R>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
 {
     fn from_iter<T: IntoIterator<Item = (L, R)>>(iter: T) -> Self {
@@ -926,7 +947,7 @@ where
 /// An iterator over the entry items of a `GroupMap`.
 pub struct Iter<'a, L, R, S> {
     right_iter: RawIter<RightItem<R>>,
-    left_iter: Option<hash_set::Iter<'a, (u64, u64)>>,
+    left_iter: Option<hash_set::Iter<'a, (u64, ID)>>,
     map_ref: &'a GroupMap<L, R, S>,
 }
 
@@ -970,7 +991,7 @@ where
                 let right = self
                     .map_ref
                     .right_set
-                    .get(left.hash, right_with_hash_and_id(pair))
+                    .get(left.hash, right_with_right_id(left.r_id))
                     .unwrap();
                 return Some((Some(&left.value), &right.value));
             }
@@ -978,10 +999,10 @@ where
         match self.right_iter.next() {
             Some(r) => {
                 let r_ref = unsafe { &r.as_ref() };
-                if r_ref.hashes.is_empty() {
+                if r_ref.pairs.is_empty() {
                     Some((None, &r_ref.value))
                 } else {
-                    let mut iter = r_ref.hashes.iter();
+                    let mut iter = r_ref.pairs.iter();
                     let pair = iter.next().unwrap();
                     self.left_iter = Some(iter);
                     let left = self
@@ -1048,7 +1069,7 @@ where
 
 impl<'a, L, R, S> Iterator for PairedIter<'a, L, R, S>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -1076,7 +1097,7 @@ where
 
 impl<'a, L, R, S> ExactSizeIterator for PairedIter<'a, L, R, S>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -1087,7 +1108,7 @@ where
 
 impl<L, R, S> FusedIterator for PairedIter<'_, L, R, S>
 where
-    L: Hash + Eq,
+    L: Hash + Eq ,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -1129,7 +1150,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(item) = self.right_iter.next().map(|r| unsafe { r.as_ref() }) {
-            if item.hashes.is_empty() {
+            if item.pairs.is_empty() {
                 return Some(&item.value);
             }
         }
@@ -1248,7 +1269,7 @@ impl<R> FusedIterator for RightIter<'_, R> {}
 
 /// An iterator over the elements of an inner set of a `GroupMap`.
 pub struct PairIter<'a, L, R, S> {
-    iter: hash_set::Iter<'a, (u64, u64)>,
+    iter: hash_set::Iter<'a, (u64, ID)>,
     map_ref: &'a GroupMap<L, R, S>,
     marker: PhantomData<&'a L>,
 }
@@ -1347,7 +1368,7 @@ impl<T: fmt::Debug> fmt::Debug for LeftItem<T> {
         write!(
             f,
             "LeftItem {{ value: {:?}, hash: {}, id: {} }}",
-            self.value, self.hash, self.id
+            self.value, self.hash, self.id.0
         )
     }
 }
@@ -1383,7 +1404,7 @@ impl<T: Clone> Clone for RightItem<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
-            pairs: self.hashes.clone(),
+            pairs: self.pairs.clone(),
             id: self.id,
         }
     }
@@ -1394,7 +1415,13 @@ impl<T: fmt::Debug> fmt::Debug for RightItem<T> {
         write!(
             f,
             "RightItem {{ value: {:?}, id: {}, pairs: {:?} }}",
-            self.value, self.id, self.hashes
+            self.value, self.id.0, self.pairs
         )
+    }
+}
+
+impl AddAssign<u64> for ID {
+    fn add_assign(&mut self, other: u64) {
+        self.0 += other;
     }
 }

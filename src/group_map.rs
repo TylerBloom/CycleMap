@@ -286,11 +286,11 @@ where
                 let pair = (l_hash, l.id);
                 r.pairs.insert(pair.clone());
                 let new_r_id = r.id;
-                let r = self
-                    .right_set
+                self.right_set
                     .get_mut(l.hash, right_with_right_id(l.r_id))
-                    .unwrap();
-                r.pairs.remove(&pair);
+                    .unwrap()
+                    .pairs
+                    .remove(&pair);
                 l.hash = r_hash;
                 l.r_id = new_r_id;
             }
@@ -443,9 +443,9 @@ where
 
     /// Inserts the given `new` right item and repairs all items paired with the `old` item but
     /// keeps the `old` item in the map.
-    /// 
+    ///
     /// Note: Use the [`swap_right_remove`] method to remove the `old` item.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::GroupMap;
@@ -454,13 +454,13 @@ where
     /// map.insert(1, "1");
     /// map.insert_left(2, &"1");
     /// map.swap_right(&"1", "2");
-    /// 
+    ///
     /// assert!(map.contains_right(&"1"));
     /// assert!(!map.is_right_paired(&"1"));
     /// assert!(map.are_paired(&1, &"2"));
     /// assert!(map.are_paired(&2, &"2"));
     /// ```
-    /// 
+    ///
     /// [`swap_right_remove`]: #method.swap_right_remove
     pub fn swap_right(&mut self, old: &R, new: R) {
         let old_hash = make_hash::<R, S>(&self.hash_builder, old);
@@ -491,7 +491,7 @@ where
 
     /// Inserts the given `new` right item, repairs all items paired with the `old` item, and
     /// return the `old` item.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::GroupMap;
@@ -500,7 +500,7 @@ where
     /// map.insert(1, "1");
     /// map.insert_left(2, &"1");
     /// map.swap_right_remove(&"1", "2");
-    /// 
+    ///
     /// assert!(!map.contains_right(&"1"));
     /// assert!(map.are_paired(&1, &"2"));
     /// assert!(map.are_paired(&2, &"2"));
@@ -544,7 +544,7 @@ where
     /// let mut map = GroupMap::new();
     /// map.insert(1, "1");
     /// map.insert_right("2");
-    /// 
+    ///
     /// assert!(map.pair(&1, &"2"));
     /// assert!(map.are_paired(&1, &"2"));
     /// assert!(!map.are_paired(&1, &"1"));
@@ -921,7 +921,7 @@ where
 
     /// Visits all pairs in the map and drops all left items if the pair causes the
     /// given closure to return `false`. Pairs are visited in an arbitary order.
-    /// 
+    ///
     /// Note: Only left items are dropped as dropping a right item would cause an entire collection
     /// of left items to be dropped.
     ///

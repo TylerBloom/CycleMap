@@ -444,6 +444,74 @@ mod tests {
     }
 
     #[test]
+    fn unpair_tests() {
+        let mut map = construct_unpaired_map();
+        for i in 0..5 {
+            assert!(map.pair(&i.to_string(), &TestingStruct::from_value(i)));
+        }
+        
+        // Try to unpair items that don't exist
+        assert!(!map.unpair(&10.to_string(), &TestingStruct::from_value(0)));
+        assert!(!map.unpair(&0.to_string(), &TestingStruct::from_value(10)));
+        assert!(!map.unpair(&10.to_string(), &TestingStruct::from_value(10)));
+        
+        // Try to unpair unpaired items
+        assert!(!map.unpair(&0.to_string(), &TestingStruct::from_value(5)));
+        assert!(!map.unpair(&5.to_string(), &TestingStruct::from_value(0)));
+        assert!(!map.unpair(&5.to_string(), &TestingStruct::from_value(5)));
+        
+        // Try to unpair unpaired items
+        assert!(map.unpair(&0.to_string(), &TestingStruct::from_value(0)));
+        assert!(!map.are_paired(&0.to_string(), &TestingStruct::from_value(0)));
+    }
+    
+    #[test]
+    fn remove_left_tests() {
+        let mut map = construct_unpaired_map();
+        for i in 0..5 {
+            assert!(map.pair(&i.to_string(), &TestingStruct::from_value(i)));
+        }
+        
+        // Try to remove an item that isn't there
+        let opt = map.remove_left(&10.to_string());
+        assert!(opt.is_none());
+        
+        // Remove a paired item
+        let opt = map.remove_left(&0.to_string());
+        assert_eq!(opt, Some(0.to_string()));
+        assert!(!map.contains_left(&0.to_string()));
+        assert!(map.contains_right(&TestingStruct::from_value(0)));
+        
+        // Remove an unpaired item
+        let opt = map.remove_left(&5.to_string());
+        assert_eq!(opt, Some(5.to_string()));
+        assert!(!map.contains_left(&5.to_string()));
+    }
+    
+    #[test]
+    fn remove_right_tests() {
+        let mut map = construct_unpaired_map();
+        for i in 0..5 {
+            assert!(map.pair(&i.to_string(), &TestingStruct::from_value(i)));
+        }
+        
+        // Try to remove an item that isn't there
+        let opt = map.remove_right(&TestingStruct::from_value(10));
+        assert!(opt.is_none());
+        
+        // Remove a paired item
+        let opt = map.remove_right(&TestingStruct::from_value(0));
+        assert_eq!(opt, Some(TestingStruct::from_value(0)));
+        assert!(!map.contains_right(&TestingStruct::from_value(0)));
+        assert!(map.contains_left(&0.to_string()));
+        
+        // Remove an unpaired item
+        let opt = map.remove_right(&TestingStruct::from_value(5));
+        assert_eq!(opt, Some(TestingStruct::from_value(5)));
+        assert!(!map.contains_right(&TestingStruct::from_value(5)));
+    }
+
+    #[test]
     fn forced_pairing_tests() {
         let mut map = construct_unpaired_map();
         for i in 0..5 {

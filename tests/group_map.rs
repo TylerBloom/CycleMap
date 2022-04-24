@@ -36,6 +36,42 @@ mod tests {
     }
 
     #[test]
+    fn insert_tests() {
+        let vals = vec![
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        ];
+        let mut map: GroupMap<String, usize> = GroupMap::new();
+
+        // Simple insert
+        for i in 0..10 {
+            map.insert(i.to_string(), i);
+            assert!(map.are_paired(&i.to_string(), &i));
+        }
+
+        // Should be the same as calling insert_right
+        for i in 0..10 {
+            map.insert(vals[i].to_string(), i);
+            assert!(map.are_paired(&i.to_string(), &i));
+            assert!(map.are_paired(&vals[i].to_string(), &i));
+        }
+
+        // Repair existing left items with new right items
+        for i in 0..10 {
+            map.insert(i.to_string(), 10 * i);
+            assert!(!map.are_paired(&i.to_string(), &i));
+            assert!(map.contains_right(&i));
+        }
+
+        // Pair existing left and right items
+        for i in 1..10 {
+            map.insert(i.to_string(), i);
+            assert!(map.are_paired(&i.to_string(), &i));
+            assert!(!map.are_paired(&i.to_string(), &(10 * i)));
+            assert!(map.contains_right(&(10 * i)));
+        }
+    }
+
+    #[test]
     fn insert_remove_test() {
         let mut map: GroupMap<u64, String> = GroupMap::with_capacity(100);
         for i in 0..100 {
@@ -48,6 +84,48 @@ mod tests {
             assert_eq!(val.to_string(), *s);
             assert_eq!(str::parse::<u64>(s).expect("Unreachable"), *val);
             println!("{val}, {s}");
+        }
+    }
+    
+    #[test]
+    fn swap_right_remove_tests() {
+        let mut map: GroupMap<String, TestingStruct> = construct_default_map();
+        
+        // Should be equivalent to insert_right
+        for i in 20..30 {
+            let opt = map.swap_right_remove(&TestingStruct::from_value(i-10), TestingStruct::from_value(i));
+            assert!(opt.is_none());
+            assert!(map.contains_right(&TestingStruct::from_value(i)));
+            assert!(!map.is_right_paired(&TestingStruct::from_value(i)));
+        }
+        
+        // Actually swap values
+        for i in 10..20 {
+            let opt = map.swap_right_remove(&TestingStruct::from_value(i-10), TestingStruct::from_value(i));
+            assert_eq!(opt, Some(TestingStruct::from_value(i-10)));
+            assert!(map.are_paired(&(i-10).to_string(), &TestingStruct::from_value(i)));
+            assert!(!map.contains_right(&TestingStruct::from_value(i-10)));
+            assert!(!map.is_right_paired(&TestingStruct::from_value(i-10)));
+        }
+    }
+    
+    #[test]
+    fn swap_right_tests() {
+        let mut map: GroupMap<String, TestingStruct> = construct_default_map();
+        
+        // Should be equivalent to insert_right
+        for i in 20..30 {
+            map.swap_right(&TestingStruct::from_value(i-10), TestingStruct::from_value(i));
+            assert!(map.contains_right(&TestingStruct::from_value(i)));
+            assert!(!map.is_right_paired(&TestingStruct::from_value(i)));
+        }
+        
+        // Actually swap values
+        for i in 10..20 {
+            map.swap_right(&TestingStruct::from_value(i-10), TestingStruct::from_value(i));
+            assert!(map.are_paired(&(i-10).to_string(), &TestingStruct::from_value(i)));
+            assert!(map.contains_right(&TestingStruct::from_value(i-10)));
+            assert!(!map.is_right_paired(&TestingStruct::from_value(i-10)));
         }
     }
 
@@ -76,7 +154,10 @@ mod tests {
         let opt = map.remove(&"0".to_string(), &TestingStruct::from_value(0));
         assert_eq!(
             opt,
-            Some((vec!["0".to_string()].into_iter().collect(), TestingStruct::from_value(0)))
+            Some((
+                vec!["0".to_string()].into_iter().collect(),
+                TestingStruct::from_value(0)
+            ))
         );
         // Left remove
         let mut map: GroupMap<String, TestingStruct> = construct_default_map();
@@ -85,7 +166,10 @@ mod tests {
         let opt = map.remove_right(&TestingStruct::from_value(0));
         assert_eq!(
             opt,
-            Some((vec!["0".to_string()].into_iter().collect(), TestingStruct::from_value(0)))
+            Some((
+                vec!["0".to_string()].into_iter().collect(),
+                TestingStruct::from_value(0)
+            ))
         );
         // Right remove
         let mut map: GroupMap<String, TestingStruct> = construct_default_map();
@@ -234,11 +318,11 @@ mod tests {
         }
         for i in 0..10 {
             if i < 5 {
-                assert!(map.are_paired(&i.to_string(), &TestingStruct::from_value(i+5)));
+                assert!(map.are_paired(&i.to_string(), &TestingStruct::from_value(i + 5)));
                 assert!(!map.are_paired(&i.to_string(), &TestingStruct::from_value(i)));
             } else {
                 assert!(!map.are_paired(&i.to_string(), &TestingStruct::from_value(i)));
-                assert!(map.are_paired(&(i-5).to_string(), &TestingStruct::from_value(i)));
+                assert!(map.are_paired(&(i - 5).to_string(), &TestingStruct::from_value(i)));
             }
         }
     }

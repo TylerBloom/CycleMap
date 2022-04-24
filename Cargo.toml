@@ -1,6 +1,6 @@
 [package]
 name = "cycle_map"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 edition = "2021"
 
 authors = ["Tyler Bloom <tylerbloom2222@gmail.com>"]

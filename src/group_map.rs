@@ -154,13 +154,26 @@ pub struct GroupMap<L, R, St = DefaultHashBuilder> {
 
 impl<L, R> GroupMap<L, R, DefaultHashBuilder> {
     #[inline]
-    /// Creates a new GroupMap
+    /// Creates a new, empty `GroupMap`.
+    /// The capacity of the new map will be 0.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    /// let map: GroupMap<u64, String> = GroupMap::new();
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
     #[inline]
-    /// Creates a new GroupMap whose inner sets each of the given capacity
+    /// Creates a new, empty `GroupMap` with inner sets that each have at least the given capacity.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    /// let map: GroupMap<u64, String> = GroupMap::with_capacity(100);
+    /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         Self::with_capacity_and_hasher(capacity, DefaultHashBuilder::default())
     }
@@ -168,13 +181,48 @@ impl<L, R> GroupMap<L, R, DefaultHashBuilder> {
 
 impl<L, R, S> GroupMap<L, R, S>
 where
-    L: Eq + Hash ,
+    L: Eq + Hash,
     R: Eq + Hash,
     S: BuildHasher,
 {
-    /// Inserts the given pair. If left is already in the left set, it is remapped to the givrn
-    /// right item. Similarly, if right is in the right set, the left item is added to left set and
-    /// paired with right. If both items are already in the map, they are similar paired.
+    /// Adds a pair of items to the map.
+    ///
+    /// If the map contains a left item that is equal to `left` already, that item is paired with
+    /// the new `right` item. Similarly, if the map contain a right item that is equal to `right`,
+    /// the new `left` item is paired with the existing right item.
+    ///
+    /// If you want to remove old items, use [`insert_remove`].
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    ///
+    /// // Simply insert a pair of new items
+    /// assert!(!map.contains_left(&5.to_string()));
+    /// assert!(!map.contains_right(&5));
+    /// map.insert(5.to_string(), 5);
+    /// assert!(map.are_paired(&5.to_string(), &5));
+    ///
+    /// // Pair "0" with a number, keep 0 in the map
+    /// map.insert(0.to_string(), 10);
+    /// assert!(map.contains_right(&0));
+    /// assert!(!map.are_paired(&0.to_string(), &0));
+    /// assert!(map.are_paired(&0.to_string(), &10));
+    ///
+    /// // Let's pair 0 with some new value
+    /// map.insert(10.to_string(), 0);
+    /// assert!(map.are_paired(&10.to_string(), &0));
+    ///
+    /// // Swap existing values
+    /// map.insert(2.to_string(), 4);
+    /// assert!(map.are_paired(&2.to_string(), &4));
+    /// assert!(map.are_paired(&4.to_string(), &4));
+    /// assert!(!map.are_paired(&2.to_string(), &2));
+    /// ```
+    ///
+    /// [`insert_remove`]: #method.insert_remove
     pub fn insert(&mut self, left: L, right: R) {
         let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
@@ -203,12 +251,13 @@ where
                 self.right_counter.0 += 1;
             }
             (Some(l), None) => {
-                l.hash = r_hash;
                 let pair = (l_hash, l.id);
                 let r = self
                     .right_set
-                    .get_mut(r_hash, right_with_left_pair(&pair))
+                    .get_mut(l.hash, right_with_left_pair(&pair))
                     .unwrap();
+                l.hash = r_hash;
+                l.r_id = self.right_counter;
                 r.pairs.remove(&pair);
                 let mut set = HashSet::with_capacity(1);
                 set.insert(pair);
@@ -243,22 +292,48 @@ where
                     .unwrap();
                 r.pairs.remove(&pair);
                 l.hash = r_hash;
-                l.id = new_r_id;
+                l.r_id = new_r_id;
             }
         }
     }
 
     /// Adds a pair of items to the map.
     ///
-    /// Should the left element be equal to another left element, the old pair is removed and
-    /// returned. The same goes for the right element.
+    /// If the map contains a left item that is equal to the new `left` item, it is removed.
+    /// If the map contains a right item that is equal to the new `right` item, it and every left
+    /// it is paired with is removed.
     ///
-    /// There is a chance for collision here. Collision occurs when the map contains elements with
-    /// identical hashes as the given left and right elements, and they are paired to each other.
-    /// In such a case, the old pair is returned and the new pair is inserted.
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
     ///
-    /// TODO: This should just pair thing in-place... Nothing should be removed
-    pub fn insert_remove(&mut self, left: L, right: R) -> (Option<L>, Option<(Vec<L>, R)>) {
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    ///
+    /// // Simply insert a pair of new items
+    /// assert!(!map.contains_left(&5.to_string()));
+    /// assert!(!map.contains_right(&5));
+    /// map.insert(5.to_string(), 5);
+    /// assert!(map.are_paired(&5.to_string(), &5));
+    ///
+    /// // Pair "0" with a number, keep 0 in the map
+    /// map.insert(0.to_string(), 10);
+    /// assert!(map.contains_right(&0));
+    /// assert!(!map.are_paired(&0.to_string(), &0));
+    /// assert!(map.are_paired(&0.to_string(), &10));
+    ///
+    /// // Let's pair 0 with some new value
+    /// map.insert(10.to_string(), 0);
+    /// assert!(map.are_paired(&10.to_string(), &0));
+    ///
+    /// // Swap existing values
+    /// map.insert(2.to_string(), 4);
+    /// assert!(map.are_paired(&2.to_string(), &4));
+    /// assert!(map.are_paired(&4.to_string(), &4));
+    /// assert!(!map.are_paired(&2.to_string(), &2));
+    /// ```
+    ///
+    /// [`insert_remove`]: #method.insert_remove
+    pub fn insert_remove(&mut self, left: L, right: R) -> (Option<L>, Option<(HashSet<L>, R)>) {
         let opt_from_left = self.remove_left(&left);
         let opt_from_right = self.remove_right(&right);
         let digest = (opt_from_left, opt_from_right);
@@ -279,27 +354,29 @@ where
         };
         self.left_counter.0 += 1;
         self.right_counter.0 += 1;
-        self.left_set.insert(
-            l_hash,
-            left_item,
-            make_hasher(&self.hash_builder),
-        );
-        self.right_set.insert(
-            r_hash,
-            right_item,
-            make_hasher(&self.hash_builder),
-        );
+        self.left_set
+            .insert(l_hash, left_item, make_hasher(&self.hash_builder));
+        self.right_set
+            .insert(r_hash, right_item, make_hasher(&self.hash_builder));
         digest
     }
 
     /// Adds an item to the left set of the map.
     ///
-    /// Should this item be equal to another, the old item is removed. If that item was paired with
-    /// a right item, the pair is removed.
+    /// Should this item be equal to another, the old item is removed.
     ///
-    /// Note: If you want to swap the left item in a pair, use the [`swap_left`] method.
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
     ///
-    /// [`swap_left`]: struct.GroupMap.html#method.swap_left
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    ///
+    /// // Let's pair 0 with a second item
+    /// let opt = map.insert_left("zero".to_string(), &0);
+    /// assert!(opt.is_none());
+    /// assert!(map.are_paired(&0.to_string(), &0));
+    /// assert!(map.are_paired(&"zero".to_string(), &0));
+    /// ```
     pub fn insert_left(&mut self, left: L, right: &R) -> Option<L> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
         let right_item = self.right_set.get_mut(r_hash, equivalent_key(right))?;
@@ -322,17 +399,33 @@ where
         digest
     }
 
-    /// Adds an item to the right set of the map.
+    /// Adds an item to the left set of the map.
     ///
-    /// Should this item be equal to another, the old item is removed. If that item was paired with
-    /// a left item, the pair is removed.
+    /// Should this item be equal to another, the old item and everything it is paired
+    /// with are removed and returned.
     ///
-    /// Note: If you want to swap the right item in a pair, use the [`swap_right`] method.
+    /// Note: If you want to swap right item, use the [`swap_right`] or [`swap_right_remove`]
+    /// method.
     ///
-    /// [`swap_right`]: struct.GroupMap.html#method.swap_right
-    pub fn insert_right(&mut self, right: R) -> Option<(Vec<L>, R)> {
-        let opt_from_right = self.remove_right(&right);
-        let digest = opt_from_right;
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<u64, String> = (0..5).map(|i| (i, "X".to_string())).collect();
+    ///
+    /// // Add a new right item to pair with future left items
+    /// let op = map.insert_right(0.to_string());
+    /// assert!(op.is_none());
+    ///
+    /// // Re-add an existing right item, removing the old copy and its paired left items
+    /// let op = map.insert_right("X".to_string());
+    /// assert_eq!(op, Some(((0..5).collect(),"X".to_string())));
+    /// ```
+    ///
+    /// [`swap_right`]: #method.swap_right
+    /// [`swap_right_remove`]: #method.swap_right_remove
+    pub fn insert_right(&mut self, right: R) -> Option<(HashSet<L>, R)> {
+        let digest = self.remove_right(&right);
         let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
         let right_item = RightItem {
             value: right,
@@ -348,8 +441,27 @@ where
         digest
     }
 
-    /// Inserts the given `new` right item and repairs all items paired with the `old` item with
-    /// the `new` item.
+    /// Inserts the given `new` right item and repairs all items paired with the `old` item but
+    /// keeps the `old` item in the map.
+    /// 
+    /// Note: Use the [`swap_right_remove`] method to remove the `old` item.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_left(2, &"1");
+    /// map.swap_right(&"1", "2");
+    /// 
+    /// assert!(map.contains_right(&"1"));
+    /// assert!(!map.is_right_paired(&"1"));
+    /// assert!(map.are_paired(&1, &"2"));
+    /// assert!(map.are_paired(&2, &"2"));
+    /// ```
+    /// 
+    /// [`swap_right_remove`]: #method.swap_right_remove
     pub fn swap_right(&mut self, old: &R, new: R) {
         let old_hash = make_hash::<R, S>(&self.hash_builder, old);
         match self.right_set.get_mut(old_hash, equivalent_key(old)) {
@@ -377,11 +489,22 @@ where
         }
     }
 
-    /// Removes the given `old` right item, inserts the given `new` right item, and repairs all
-    /// items paired with the `old` item with the `new` item.
+    /// Inserts the given `new` right item, repairs all items paired with the `old` item, and
+    /// return the `old` item.
+    /// 
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
     ///
-    /// If the `old` item isn't in the map, `None` is returned. Otherwise, the `old` value is
-    /// returned.
+    /// let mut map = GroupMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_left(2, &"1");
+    /// map.swap_right_remove(&"1", "2");
+    /// 
+    /// assert!(!map.contains_right(&"1"));
+    /// assert!(map.are_paired(&1, &"2"));
+    /// assert!(map.are_paired(&2, &"2"));
+    /// ```
     pub fn swap_right_remove(&mut self, old: &R, new: R) -> Option<R> {
         let old_hash = make_hash::<R, S>(&self.hash_builder, old);
         match self.right_set.remove_entry(old_hash, equivalent_key(old)) {
@@ -412,11 +535,20 @@ where
     }
 
     /// Pairs two existing items in the map. Returns `true` if they were successfully paired.
-    /// Returns `false` if either item can not be found or if either items is already paired.
+    /// Returns `false` if either item can not be found.
     ///
-    /// Use [`pair_forced`] if you want to break the existing pairings.
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
     ///
-    /// [`pair_forced`]: struct.GroupMap.html#method.pair_forced
+    /// let mut map = GroupMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_right("2");
+    /// 
+    /// assert!(map.pair(&1, &"2"));
+    /// assert!(map.are_paired(&1, &"2"));
+    /// assert!(!map.are_paired(&1, &"1"));
+    /// ```
     pub fn pair(&mut self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
@@ -448,14 +580,23 @@ where
         digest
     }
 
-    /// Determines if an item in the right set is paired.
+    /// Returns `false` if the item isn't found or is unpaired. Returns `true` otherwise.
     ///
-    /// Returns false if the item isn't found or is unpaired. Returns true otherwise.
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_right("2");
+    /// assert!(map.is_right_paired(&"1"));
+    /// assert!(!map.is_right_paired(&"2"));
+    /// ```
     pub fn is_right_paired(&self, right: &R) -> bool {
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match opt_right {
-            Some(r) => r.pairs.is_empty(),
+            Some(r) => !r.pairs.is_empty(),
             None => false,
         }
     }
@@ -518,8 +659,20 @@ where
         self.right_set.get(hash, equivalent_key(right)).is_some()
     }
 
-    /// Removes a pair of items only if they are paired together and returns the pair
-    pub fn remove(&mut self, left: &L, right: &R) -> Option<(Vec<L>, R)> {
+    /// Removes a pair of items only if they are paired together. The right item and every item it
+    /// was paired with are returned.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_left(2, &"1");
+    /// assert_eq!(map.remove(&1, &"1"), Some(((1..3).collect(), "1")));
+    /// assert_eq!(map.remove(&1, &"1"), None);
+    /// ```
+    pub fn remove(&mut self, left: &L, right: &R) -> Option<(HashSet<L>, R)> {
         if self.are_paired(left, right) {
             self.remove_right(right)
         } else {
@@ -527,7 +680,17 @@ where
         }
     }
 
-    /// Removes the given item from the left set and its associated item from the right set
+    /// Removes the given `left` item from the left set and returns it.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// map.insert(1, "1");
+    /// assert_eq!(map.remove_left(&1), Some(1));
+    /// assert_eq!(map.remove_left(&2), None);
+    /// ```
     pub fn remove_left(&mut self, item: &L) -> Option<L> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_item = self.left_set.remove_entry(l_hash, equivalent_key(item))?;
@@ -540,11 +703,25 @@ where
         Some(left_item.extract())
     }
 
-    /// Removes the given item from the right set and its associated item from the left set
-    pub fn remove_right(&mut self, item: &R) -> Option<(Vec<L>, R)> {
+    /// Removes the given `right` item from the right set and returns it and all of its paired left
+    /// items.
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use hashbrown::HashSet;
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// map.insert(1, "1");
+    /// map.insert_left(2, &"1");
+    /// map.insert_right("2");
+    /// assert_eq!(map.remove_right(&"1"), Some(((1..3).collect(), "1")));
+    /// assert_eq!(map.remove_right(&"2"), Some((HashSet::new(), "2")));
+    /// ```
+    pub fn remove_right(&mut self, item: &R) -> Option<(HashSet<L>, R)> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let right_item = self.right_set.remove_entry(r_hash, equivalent_key(item))?;
-        let left_vec: Vec<L> = right_item
+        let left_vec: HashSet<L> = right_item
             .pairs
             .iter()
             .map(|(h, i)| {
@@ -615,10 +792,10 @@ where
     pub fn get_right(&self, item: &L) -> Option<&R> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let left_item = self.get_left_inner_with_hash(item, l_hash)?;
-        match self.right_set.get(
-            left_item.hash,
-            right_with_right_id(left_item.r_id),
-        ) {
+        match self
+            .right_set
+            .get(left_item.hash, right_with_right_id(left_item.r_id))
+        {
             None => None,
             Some(pairing) => Some(&pairing.value),
         }
@@ -634,7 +811,24 @@ where
         self.right_set.get(hash, equivalent_key(item))
     }
 
-    /// Returns an iterator over the items in the map
+    /// Returns an iterator that visits all the items in the map in an arbitary order.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    /// map.insert_right(5);
+    ///
+    /// for (left, right) in map.iter() {
+    ///     if let Some(l) = left {
+    ///         assert!(*right != 5);
+    ///     } else {
+    ///         assert_eq!(*right, 5);
+    ///     }
+    ///     println!("left: {left:?}, right: {right}");
+    /// }
+    /// ```
     pub fn iter(&self) -> Iter<'_, L, R, S> {
         Iter {
             right_iter: unsafe { self.right_set.iter() },
@@ -643,7 +837,20 @@ where
         }
     }
 
-    /// Returns an iterator over the paired items in the map
+    /// Returns an iterator that visits all the pairs in the map in an arbitary order.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    /// map.insert_right(5);
+    ///
+    /// for (left, right) in map.iter_paired() {
+    ///     assert!(*right != 5);
+    ///     println!("left: {left}, right: {right}");
+    /// }
+    /// ```
     pub fn iter_paired(&self) -> PairedIter<'_, L, R, S> {
         PairedIter {
             left_iter: unsafe { self.left_set.iter() },
@@ -651,7 +858,20 @@ where
         }
     }
 
-    /// Returns an iterator over the unpaired items in the map
+    /// Returns an iterator that visits all the pairs in the map in an arbitary order.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    /// map.insert_right(5);
+    ///
+    /// let mut iter = map.iter_unpaired();
+    ///
+    /// assert_eq!(iter.next(), Some(&5));
+    /// assert_eq!(iter.next(), None);
+    /// ```
     pub fn iter_unpaired(&self) -> UnpairedIter<'_, L, R, S> {
         UnpairedIter {
             right_iter: unsafe { self.right_set.iter() },
@@ -659,7 +879,19 @@ where
         }
     }
 
-    /// Returns an iterator over elements in the left set
+    /// Returns an iterator that visits all left items in an arbitary order.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    /// map.insert_right(5);
+    ///
+    /// for left in map.iter_left() {
+    ///     println!("left: {left}");
+    /// }
+    /// ```
     pub fn iter_left(&self) -> LeftIter<'_, L> {
         LeftIter {
             left_iter: unsafe { self.left_set.iter() },
@@ -667,7 +899,19 @@ where
         }
     }
 
-    /// Returns an iterator over elements in the right set
+    /// Returns an iterator that visits all right items in an arbitary order.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..5).map(|i| (i.to_string(), i)).collect();
+    /// map.insert_right(5);
+    ///
+    /// for right in map.iter_right() {
+    ///     println!("right: {right}");
+    /// }
+    /// ```
     pub fn iter_right(&self) -> RightIter<'_, R> {
         RightIter {
             right_iter: unsafe { self.right_set.iter() },
@@ -675,28 +919,24 @@ where
         }
     }
 
-    /// Drops all items that cause the predicate to return `false` while keeping the backing memory
-    /// allocated
-    pub fn retain<F>(&mut self, mut f: F)
-    where
-        F: FnMut(Option<&L>, &R) -> bool,
-    {
-        // right hash, left id
-        let mut to_drop: Vec<(u64, ID)> = Vec::with_capacity(self.left_set.len());
-        for (opt_l, r) in self.iter() {
-            if f(opt_l, r) {
-                let r_hash = make_hash::<R, S>(&self.hash_builder, r);
-                let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
-                to_drop.push((r_hash, r_item.id));
-            }
-        }
-        for (r_hash, id) in to_drop {
-            self.remove_via_hash_and_id(r_hash, id);
-        }
-    }
-
-    /// Drops all pairs that cause the predicate to return `false` while keeping the backing memory
-    /// allocated
+    /// Visits all pairs in the map and drops all left items if the pair causes the
+    /// given closure to return `false`. Pairs are visited in an arbitary order.
+    /// 
+    /// Note: Only left items are dropped as dropping a right item would cause an entire collection
+    /// of left items to be dropped.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..50).map(|i| (i.to_string(), i)).collect();
+    /// map.extend((50..100).map(|i| (None, i)));
+    ///
+    /// //Remove all left items with an odd right item
+    /// map.retain_unpaired(|r| r % 2 == 0);
+    /// assert_eq!(map.len_left(), 50);
+    /// assert_eq!(map.len_right(), 75);
+    /// ```
     pub fn retain_paired<F>(&mut self, mut f: F)
     where
         F: FnMut(&L, &R) -> bool,
@@ -705,18 +945,31 @@ where
         let mut to_drop: Vec<(u64, ID)> = Vec::with_capacity(self.left_set.len());
         for (l, r) in self.iter_paired() {
             if f(l, r) {
-                let r_hash = make_hash::<R, S>(&self.hash_builder, r);
-                let r_item = self.get_right_inner_with_hash(r, r_hash).unwrap();
-                to_drop.push((r_hash, r_item.id));
+                let l_hash = make_hash(&self.hash_builder, l);
+                let l_item = self.get_left_inner_with_hash(l, l_hash).unwrap();
+                to_drop.push((l_hash, l_item.id));
             }
         }
-        for (r_hash, id) in to_drop {
-            self.remove_via_hash_and_id(r_hash, id);
+        for (l_hash, id) in to_drop {
+            self.left_set.remove_entry(l_hash, left_with_left_id(id));
         }
     }
 
-    /// Drops all unpaired items that cause the predicate to return `false` while keeping the backing memory
-    /// allocated
+    /// Visits all unpaired right items in the map and drops all items if the item causes the given
+    /// closure to return `false`. Items are visited in an arbitary order.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map: GroupMap<String, u64> = (0..50).map(|i| (i.to_string(), i)).collect();
+    /// map.extend((50..100).map(|i| (None, i)));
+    ///
+    /// //Remove all left items with an odd right item
+    /// map.retain_paired(|_, r| r % 2 == 0);
+    /// assert_eq!(map.len_left(), 25);
+    /// assert_eq!(map.len_right(), 100);
+    /// ```
     pub fn retain_unpaired<F>(&mut self, mut f: F)
     where
         F: FnMut(&R) -> bool,
@@ -775,7 +1028,7 @@ where
 
 impl<L, R, S> PartialEq<GroupMap<L, R, S>> for GroupMap<L, R, S>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -792,14 +1045,31 @@ where
 
 impl<L, R, S> Eq for GroupMap<L, R, S>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
     S: BuildHasher,
 {
 }
 
 impl<L, R, S> GroupMap<L, R, S> {
-    /// Creates a GroupMap that uses the given hasher
+    /// Creates a `GroupMap`and that uses the given hasher.
+    ///
+    /// Warning: `hash_builder` is normally randomly generated, and is designed to allow
+    /// `GroupMap`s to be resistant to attacks that cause many collisions and very poor
+    /// performance. Setting it manually using this function can expose a DoS attack vector.
+    ///
+    /// The `hash_builder` passed should implement the [`BuildHasher`] trait for the GroupMap to be
+    /// useful, see its documentation for details.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    /// use std::collections::hash_map::RandomState;
+    ///
+    /// let s = RandomState::new();
+    /// let mut map = GroupMap::with_capacity_and_hasher(10, s);
+    /// map.insert(1, "1");
+    /// ```
     pub const fn with_hasher(hash_builder: S) -> Self {
         Self {
             hash_builder,
@@ -810,7 +1080,27 @@ impl<L, R, S> GroupMap<L, R, S> {
         }
     }
 
-    /// Creates a GroupMap that uses the given hasher and whose inner sets each have the given capacity
+    /// Creates a `GroupMap` with inner sets that have at least the specified capacity, and that
+    /// uses the given hasher.
+    ///
+    /// The map will be able to hold at least `capacity` many pairs before reallocating.
+    ///
+    /// Warning: `hash_builder` is normally randomly generated, and is designed to allow
+    /// `GroupMap`s to be resistant to attacks that cause many collisions and very poor
+    /// performance. Setting it manually using this function can expose a DoS attack vector.
+    ///
+    /// The `hash_builder` passed should implement the [`BuildHasher`] trait for the GroupMap to be
+    /// useful, see its documentation for details.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    /// use std::collections::hash_map::RandomState;
+    ///
+    /// let s = RandomState::new();
+    /// let mut map = GroupMap::with_capacity_and_hasher(10, s);
+    /// map.insert(1, "1");
+    /// ```
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
             hash_builder,
@@ -852,19 +1142,56 @@ impl<L, R, S> GroupMap<L, R, S> {
         self.right_set.capacity()
     }
 
-    /// Returns the len of the inner sets (same between sets)
+    /// Returns the number of items in the left set.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// assert_eq!(map.len_left(), 0);
+    /// map.insert(1, "1");
+    /// map.insert_right("2");
+    /// assert_eq!(map.len_left(), 1);
+    /// ```
     pub fn len_left(&self) -> usize {
-        // The size of the sets is always equal
         self.left_set.len()
     }
 
-    /// Returns the len of the inner sets (same between sets)
+    /// Returns the number of items in the right set.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// assert_eq!(map.len_right(), 0);
+    /// map.insert(1, "1");
+    /// map.insert_right("2");
+    /// assert_eq!(map.len_right(), 2);
+    /// ```
     pub fn len_right(&self) -> usize {
-        // The size of the sets is always equal
         self.right_set.len()
     }
 
-    /// Returns true if no items are in the map and false otherwise
+    /// Returns `true` if no items are in the map and `false` otherwise.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use cycle_map::GroupMap;
+    ///
+    /// let mut map = GroupMap::new();
+    /// assert!(map.is_empty());
+    /// map.insert(1, "1");
+    /// assert!(!map.is_empty());
+    ///
+    /// let mut map: GroupMap<u64, &str> = GroupMap::new();
+    /// assert!(map.is_empty());
+    /// map.insert_right("1");
+    /// assert_eq!(map.len_left(), 0);
+    /// assert_eq!(map.len_right(), 1);
+    /// assert!(!map.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.len_left() + self.len_right() == 0
     }
@@ -890,7 +1217,7 @@ impl<L, R, S> GroupMap<L, R, S> {
 
 impl<L, R, S> Extend<(Option<L>, R)> for GroupMap<L, R, S>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -908,7 +1235,7 @@ where
 
 impl<L, R, S> Extend<(L, R)> for GroupMap<L, R, S>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -922,7 +1249,7 @@ where
 
 impl<L, R> FromIterator<(Option<L>, R)> for GroupMap<L, R>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
 {
     fn from_iter<T: IntoIterator<Item = (Option<L>, R)>>(iter: T) -> Self {
@@ -934,7 +1261,7 @@ where
 
 impl<L, R> FromIterator<(L, R)> for GroupMap<L, R>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
 {
     fn from_iter<T: IntoIterator<Item = (L, R)>>(iter: T) -> Self {
@@ -1069,7 +1396,7 @@ where
 
 impl<'a, L, R, S> Iterator for PairedIter<'a, L, R, S>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -1097,7 +1424,7 @@ where
 
 impl<'a, L, R, S> ExactSizeIterator for PairedIter<'a, L, R, S>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
     S: BuildHasher,
 {
@@ -1108,7 +1435,7 @@ where
 
 impl<L, R, S> FusedIterator for PairedIter<'_, L, R, S>
 where
-    L: Hash + Eq ,
+    L: Hash + Eq,
     R: Hash + Eq,
     S: BuildHasher,
 {

@@ -1855,7 +1855,6 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
     /// assert_eq!(map.len_left(), 2);
     /// ```
     pub fn len_left(&self) -> usize {
-        // The size of the sets is always equal
         self.left_set.len()
     }
 
@@ -1872,7 +1871,6 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
     /// assert_eq!(map.len_right(), 2);
     /// ```
     pub fn len_right(&self) -> usize {
-        // The size of the sets is always equal
         self.right_set.len()
     }
 

@@ -113,7 +113,7 @@ impl<L, R> CycleMap<L, R, DefaultHashBuilder> {
     }
 
     #[inline]
-    /// Creates a new, empty `CycleMap` with inner sets that each have at least the given capacity
+    /// Creates a new, empty `CycleMap` with inner sets that each have at least the given capacity.
     ///
     /// # Examples
     /// ```rust

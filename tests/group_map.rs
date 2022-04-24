@@ -76,7 +76,7 @@ mod tests {
         let opt = map.remove(&"0".to_string(), &TestingStruct::from_value(0));
         assert_eq!(
             opt,
-            Some((vec!["0".to_string()], TestingStruct::from_value(0)))
+            Some((vec!["0".to_string()].into_iter().collect(), TestingStruct::from_value(0)))
         );
         // Left remove
         let mut map: GroupMap<String, TestingStruct> = construct_default_map();
@@ -85,7 +85,7 @@ mod tests {
         let opt = map.remove_right(&TestingStruct::from_value(0));
         assert_eq!(
             opt,
-            Some((vec!["0".to_string()], TestingStruct::from_value(0)))
+            Some((vec!["0".to_string()].into_iter().collect(), TestingStruct::from_value(0)))
         );
         // Right remove
         let mut map: GroupMap<String, TestingStruct> = construct_default_map();
@@ -93,25 +93,6 @@ mod tests {
         assert!(opt.is_none());
         let opt = map.remove_left(&"0".to_string());
         assert_eq!(opt, Some("0".to_string()));
-    }
-
-    #[test]
-    fn retain_test() {
-        let mut map: GroupMap<u64, String> = GroupMap::with_capacity(100);
-        for i in 0..100 {
-            if i < 50 {
-                let opt = map.insert_remove(i, i.to_string());
-                assert_eq!(opt, (None, None));
-            } else {
-                let opt = map.insert_right(i.to_string());
-                assert_eq!(opt, None);
-            }
-        }
-        assert_eq!(map.len_left(), 50);
-        assert_eq!(map.len_right(), 100);
-        map.retain(|opt, _| opt.is_none() );
-        assert_eq!(map.len_left(), 50);
-        assert_eq!(map.len_right(), 50);
     }
 
     #[test]
@@ -130,7 +111,7 @@ mod tests {
         assert_eq!(map.len_right(), 100);
         map.retain_paired(|l, _| *l % 2 == 0);
         assert_eq!(map.len_left(), 25);
-        assert_eq!(map.len_right(), 75);
+        assert_eq!(map.len_right(), 100);
         for op in map.iter() {
             println!("{op:?}");
             if let Some(x) = op.0 {

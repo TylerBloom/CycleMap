@@ -1,6 +1,6 @@
 use std::fmt;
 
-/// An OptionalPair represents a tuple whose elements are both [`Options`]s. It is a
+/// An OptionalPair represents a tuple whose elements are both `Option`s. It is a
 /// more ergonomic alternative to `(Option<(L,R)>,Option<(L,R)>)`, and is most often used
 /// as a return value for a map's insert method.
 ///

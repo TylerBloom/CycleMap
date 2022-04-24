@@ -70,8 +70,8 @@ pub(crate) struct RightItem<T> {
 ///
 /// Unlike `CycleMap` which bijectively maps two sets together, a `GroupMap` weakly
 /// [`surjectively`] maps two sets together. In other words, every item in the left set much be
-/// paired to an item in the right set, but two left items are allowed to map to the same right
-/// item. However, the "weak" surjectivity comes from the fact that not all right items have to be
+/// paired to an item in the right set, but two left items are allowed to be paired with the same
+/// right item. The "weak" surjectivity comes from the fact that not all right items have to be
 /// paired to anything.
 ///
 /// Like the other map types in this crate, `GroupMap` is built on tap of the [`HashMap`]

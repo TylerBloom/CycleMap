@@ -48,9 +48,10 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 
 /// A hash map implementation that allows bi-directional, constant time lookups.
 ///
-/// `CycleMap` bijectively maps two sets together. In other words, every item in a set is mapped to
-/// one and only one item in the other set. It does this while maintaining the same complexitity
-/// for lookups as a traditional hash map and while only keeping a single copy of each element.
+/// `CycleMap` bijectively maps two sets together. In other words, every item in a set is paired
+/// with one and only one item in the other set. It does this while maintaining the same
+/// complexitity for lookups as a traditional hash map and while only keeping a single copy of each
+/// element.
 ///
 /// `CycleMap` is built on top of the [`HashMap`] implementation found in [`hashbrown`].
 /// As such, it uses the same default hashing algorithm as `hashbrown`'s `HashMap`.

@@ -50,11 +50,12 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// `PartialCycleMap` takes loosens the pairing requirement of a `CycleMap`, but the other
 /// requirements (namely that values must implement [`Eq`] and [`Hash`]) remain.
 /// 
-/// The enum [`OptionalPair`] is used extensively throughout the `PartialCycleMap` since there
-/// often full pairs can't be be guaranteed. `OptionalPair` help to express this by giving a more
-/// ergonomic fell to its equivalent representation, `(Option<A>, Option<B>)`.
+/// The enum [`OptionalPair`] is used extensively throughout the `PartialCycleMap` since full pairs
+/// often can't be be guaranteed. `OptionalPair` helps to express this by giving a more ergonomic
+/// feel to its equivalent representation, `(Option<A>, Option<B>)` or `Option<(Option<A>,
+/// Option<B>)`.
 ///
-/// Note: while a `PartialCycleMap` can do everything that a `CycleMap` can, it is generally less
+/// Note: While a `PartialCycleMap` can do everything that a `CycleMap` can, it is generally less
 /// efficient. Many more checks need to be done since every item can't be assumed to be paired.
 /// When possible, it is generally better to use a `CycleMap`.
 ///

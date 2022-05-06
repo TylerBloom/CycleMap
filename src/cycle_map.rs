@@ -1,3 +1,13 @@
+use crate::{optionals::*, utils::*};
+use OptionalPair::*;
+
+use hashbrown::{
+    hash_map::DefaultHashBuilder,
+    raw::{RawDrain, RawIter, RawTable},
+    TryReserveError,
+};
+
+use core::mem;
 use std::{
     borrow::Borrow,
     default::Default,
@@ -6,18 +16,6 @@ use std::{
     iter::FusedIterator,
     marker::PhantomData,
 };
-
-use core::mem;
-
-use hashbrown::{
-    hash_map::DefaultHashBuilder,
-    raw::{RawDrain, RawIter, RawTable},
-    TryReserveError,
-};
-
-use crate::optionals::*;
-use crate::utils::*;
-use OptionalPair::*;
 
 #[cfg(doc)]
 use hashbrown::HashMap;
@@ -136,7 +134,7 @@ where
     ///
     /// Should the left element be equal to another left element, the pair containing the old left
     /// item is removed and returned. The same goes for the new right element.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::{CycleMap, OptionalPair::*};
@@ -874,13 +872,13 @@ where
     /// Shrinks the capacity of the map with a lower limit. It will drop down no lower than the
     /// supplied limit while maintaining the internal rules and possibly leaving some space in
     /// accordance with the resize policy.
-    /// 
+    ///
     /// This function does nothing if the current capacity is smaller than the supplied minimum capacity.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map: CycleMap<i32, i32> = CycleMap::with_capacity(100);
     /// map.insert(1, 2);
     /// map.insert(3, 4);
@@ -902,11 +900,11 @@ where
     /// Shrinks the capacity of the map as much as possible. It will drop down as much as possible
     /// while maintaining the internal rules and possibly leaving some space in accordance with the
     /// resize policy.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
-    /// 
+    ///
     /// let mut map: CycleMap<i32, i32> = CycleMap::with_capacity(100);
     /// map.insert(1, 2);
     /// map.insert(3, 4);
@@ -923,10 +921,10 @@ where
 
     /// Reserves capacity for at least additional more elements to be inserted in the HashMap. The
     /// collection may reserve more space to avoid frequent reallocations.
-    /// 
+    ///
     /// # Panics
     /// Panics if the new allocation size overflows usize.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;
@@ -942,10 +940,10 @@ where
 
     /// Tries to reserve capacity for at least additional more elements to be inserted in the given
     /// HashMap<K,V>. The collection may reserve more space to avoid frequent reallocations.
-    /// 
+    ///
     /// # Errors
     /// If the capacity overflows, or the allocator reports a failure, then an error is returned.
-    /// 
+    ///
     /// # Examples
     /// ```rust
     /// use cycle_map::CycleMap;

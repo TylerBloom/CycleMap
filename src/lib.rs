@@ -20,6 +20,9 @@
 #![cfg_attr(doc, deny(missing_docs, rustdoc::broken_intra_doc_links))]
 #![warn(rust_2018_idioms)]
 
+//#[cfg(feature = "serde")]
+mod serde;
+
 /// A strict one-to-one map
 pub mod cycle_map;
 /// A strict one-to-one map

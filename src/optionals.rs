@@ -18,12 +18,7 @@ use std::fmt;
 ///     SomeBoth(left, right) => { /*...*/ },
 /// }
 /// ```
-#[derive(PartialEq, Eq)]
-pub enum OptionalPair<L, R>
-where
-    L: Eq,
-    R: Eq,
-{
+pub enum OptionalPair<L, R> {
     /// Equivalent to `Option`'s `None` variant
     Neither,
     /// Equivalent to `Some(Some((left, right)), None)`
@@ -36,18 +31,40 @@ where
 
 use OptionalPair::*;
 
-/// A shorthand for an optional pair of tuples used in some map insert methods
-pub type InsertOptional<L, R> = OptionalPair<(L, R), (L, R)>;
-//pub type SwapOptional<I, P> = OptionalPair<I, P>;
+impl<L, R> PartialEq for OptionalPair<L, R>
+where
+    L: PartialEq,
+    R: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Neither, Neither) => true,
+            (SomeLeft(l1), SomeLeft(l2)) => l1.eq(l2),
+            (SomeRight(r1), SomeRight(r2)) => r1.eq(r2),
+            (SomeBoth(l1, r1), SomeBoth(l2, r2)) => l1.eq(l2) && r1.eq(r2),
+            _ => false,
+        }
+    }
+}
 
-impl<L, R> OptionalPair<L, R>
+impl<L, R> Eq for OptionalPair<L, R>
 where
     L: Eq,
     R: Eq,
 {
+}
+
+/// A shorthand for an optional pair of tuples used in some map insert methods
+pub type InsertOptional<L, R> = OptionalPair<(L, R), (L, R)>;
+//pub type SwapOptional<I, P> = OptionalPair<I, P>;
+
+impl<L, R> OptionalPair<L, R> {
     /// Returns true if `self` is `OptionalPair::Neither` and false otherwise
     pub fn is_none(&self) -> bool {
-        *self == OptionalPair::Neither
+        match self {
+            Neither => true,
+            _ => false,
+        }
     }
 
     /// Returns the negation of [`is_none`]
@@ -86,8 +103,6 @@ where
     /// Maps both inner values of a pair, consuming this pair.
     pub fn map<A, B, LF, RF>(self, left: LF, right: RF) -> OptionalPair<A, B>
     where
-        A: Eq,
-        B: Eq,
         LF: FnOnce(L) -> A,
         RF: FnOnce(R) -> B,
     {
@@ -116,7 +131,6 @@ where
     /// Maps right inner value of a pair, consuming this pair.
     pub fn map_right<A, F>(self, f: F) -> OptionalPair<L, A>
     where
-        A: Eq,
         F: FnOnce(R) -> A,
     {
         match self {
@@ -130,8 +144,8 @@ where
 
 impl<L, R> OptionalPair<&L, &R>
 where
-    L: Eq + Clone,
-    R: Eq + Clone,
+    L: Clone,
+    R: Clone,
 {
     /// Takes an `OptionalPair` that contains references to clonable values and returns an
     /// `OptionalPair` of clones of those values.
@@ -147,8 +161,8 @@ where
 
 impl<L, R> Clone for OptionalPair<L, R>
 where
-    L: Eq + Clone,
-    R: Eq + Clone,
+    L: Clone,
+    R: Clone,
 {
     fn clone(&self) -> Self {
         match self {
@@ -162,8 +176,8 @@ where
 
 impl<L, R> fmt::Debug for OptionalPair<L, R>
 where
-    L: fmt::Debug + Eq,
-    R: fmt::Debug + Eq,
+    L: fmt::Debug,
+    R: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

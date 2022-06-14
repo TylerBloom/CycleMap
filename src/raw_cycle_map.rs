@@ -1056,7 +1056,12 @@ where
     S: BuildHasher,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.clone()).finish()
+        f.debug_list()
+            .entries(
+                self.clone()
+                    .map(|op| op.map(|l| l.as_ptr(), |r| r.as_ptr())),
+            )
+            .finish()
     }
 }
 
@@ -1066,24 +1071,22 @@ where
     R: Hash + Eq,
     S: BuildHasher,
 {
-    type Item = OptionalPair<&'a L, &'a R>;
+    type Item = OptionalPair<Bucket<MappingPair<L>>, Bucket<MappingPair<R>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(l_pairing) = self.left_iter.next() {
-            let l = unsafe { l_pairing.as_ref() };
+        while let Some(l) = self.left_iter.next() {
             // Ignore all paired items
-            if l.hash.is_some() {
+            if unsafe { l.as_ref().hash.is_some() } {
                 continue;
             }
-            return Some(SomeLeft(&l.value));
+            return Some(SomeLeft(l));
         }
-        while let Some(r_pairing) = self.right_iter.next() {
-            let r = unsafe { r_pairing.as_ref() };
+        while let Some(r) = self.right_iter.next() {
             // Ignore all paired items
-            if r.hash.is_some() {
+            if unsafe { r.as_ref().hash.is_some() } {
                 continue;
             }
-            return Some(SomeRight(&r.value));
+            return Some(SomeRight(r));
         }
         None
     }
@@ -1132,7 +1135,7 @@ where
     T: Hash + Eq + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.clone()).finish()
+        f.debug_list().entries(self.clone().map(|m| m.as_ptr())).finish()
     }
 }
 
@@ -1140,17 +1143,12 @@ impl<'a, T> Iterator for SingleIter<'a, T>
 where
     T: 'a + Hash + Eq,
 {
-    type Item = &'a T;
+    type Item = Bucket<MappingPair<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
-            Some(item) => {
-                let val = unsafe { &item.as_ref().value };
-                Some(val)
-            }
-            None => None,
-        }
+        self.iter.next()
     }
+    
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
     }

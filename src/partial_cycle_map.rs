@@ -1215,7 +1215,7 @@ where
 
     /// Returns an iterator over the items in the map
     ///
-    /// Nope: The iterator will never yield the `Neither` variant of `OptionalPair` and will
+    /// Note: The iterator will never yield the `Neither` variant of `OptionalPair` and will
     /// instead yield `None`.
     ///
     /// # Examples
@@ -2007,6 +2007,7 @@ where
 {
     type Item = OptionalPair<&'a L, &'a R>;
 
+    // TODO: This is incorrect. Unpaired right items are never reached!!
     fn next(&mut self) -> Option<Self::Item> {
         match self.left_iter.next() {
             Some(l) => unsafe {

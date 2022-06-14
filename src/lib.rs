@@ -20,6 +20,11 @@
 #![cfg_attr(doc, deny(missing_docs, rustdoc::broken_intra_doc_links))]
 #![warn(rust_2018_idioms)]
 
+/// A raw one-to-one map
+pub mod raw_cycle_map;
+/// A raw one-to-one map
+pub use crate::raw_cycle_map::RawCycleMap;
+
 /// A strict one-to-one map
 pub mod cycle_map;
 /// A strict one-to-one map

@@ -976,8 +976,8 @@ where
 
 impl<'a, L, R, S> Iterator for Iter<'a, L, R, S>
 where
-    L: Hash + Eq,
-    R: Hash + Eq,
+    L: Hash + Eq + Debug,
+    R: Hash + Eq + Debug,
     S: BuildHasher,
 {
     type Item = (&'a L, &'a R);
@@ -985,8 +985,10 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         match self.iter.next()? {
             SomeBoth(l, r) => unsafe { Some((&l.as_ref().value, &r.as_ref().value)) },
-            _ => {
-                unreachable!("Internal state error: Unpaired item found in CycleMap");
+            SomeLeft(_) => { unreachable!("Got some left."); }
+            SomeRight(r) => { unreachable!("Got some right: {:?}.", unsafe { r.as_ref() }); }
+            Neither => {
+                unreachable!("Got neither.");
             }
         }
     }
@@ -998,8 +1000,8 @@ where
 
 impl<L, R, S> ExactSizeIterator for Iter<'_, L, R, S>
 where
-    L: Hash + Eq,
-    R: Hash + Eq,
+    L: Hash + Eq + Debug,
+    R: Hash + Eq + Debug,
     S: BuildHasher,
 {
     fn len(&self) -> usize {
@@ -1009,8 +1011,8 @@ where
 
 impl<L, R, S> FusedIterator for Iter<'_, L, R, S>
 where
-    L: Hash + Eq,
-    R: Hash + Eq,
+    L: Hash + Eq + Debug,
+    R: Hash + Eq + Debug,
     S: BuildHasher,
 {
 }

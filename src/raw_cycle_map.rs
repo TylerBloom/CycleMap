@@ -902,16 +902,22 @@ where
 {
     type Item = OptionalPair<Bucket<MappingItem<L>>, Bucket<MappingItem<R>>>;
 
+    // TODO: This needs work. Both maps shouldn't need to be passed through...
     fn next(&mut self) -> Option<Self::Item> {
         match self.left_iter.next() {
             Some(l) => match self.map_ref.find_right(unsafe { l.as_ref() }) {
                 Some(r) => Some(OptionalPair::SomeBoth(l, r)),
                 None => Some(OptionalPair::SomeLeft(l)),
             },
-            None => match self.right_iter.next() {
-                Some(r) => Some(OptionalPair::SomeRight(r)),
-                None => None,
-            },
+            None => {
+                while let Some(r) = self.right_iter.next() {
+                    if unsafe { r.as_ref().hash.is_some() } {
+                        continue;
+                    }
+                    return Some(OptionalPair::SomeRight(r));
+                }
+                None
+            }
         }
     }
 

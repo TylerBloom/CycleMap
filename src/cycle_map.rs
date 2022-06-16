@@ -1,7 +1,7 @@
 use std::{
     borrow::Borrow,
     default::Default,
-    fmt::{self, Debug},
+    fmt,
     hash::{BuildHasher, Hash},
     iter::FusedIterator,
 };
@@ -98,8 +98,8 @@ impl<L, R> CycleMap<L, R, DefaultHashBuilder> {
 
 impl<L, R, S> CycleMap<L, R, S>
 where
-    L: Eq + Hash + Debug,
-    R: Eq + Hash + Debug,
+    L: Eq + Hash,
+    R: Eq + Hash,
     S: BuildHasher,
 {
     /// Adds a pair of items to the map.
@@ -904,8 +904,8 @@ where
 
 impl<L, R, S> PartialEq<CycleMap<L, R, S>> for CycleMap<L, R, S>
 where
-    L: Hash + Eq + Debug,
-    R: Hash + Eq + Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -918,16 +918,16 @@ where
 
 impl<L, R, S> Eq for CycleMap<L, R, S>
 where
-    L: Hash + Eq + Debug,
-    R: Hash + Eq + Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
 }
 
 impl<L, R, S> Extend<(L, R)> for CycleMap<L, R, S>
 where
-    L: Hash + Eq + Debug,
-    R: Hash + Eq + Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
     #[inline]
@@ -940,8 +940,8 @@ where
 
 impl<L, R> FromIterator<(L, R)> for CycleMap<L, R>
 where
-    L: Hash + Eq + Debug,
-    R: Hash + Eq + Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
 {
     fn from_iter<T: IntoIterator<Item = (L, R)>>(iter: T) -> Self {
         let mut digest = CycleMap::default();
@@ -976,8 +976,8 @@ where
 
 impl<'a, L, R, S> Iterator for Iter<'a, L, R, S>
 where
-    L: Hash + Eq + Debug,
-    R: Hash + Eq + Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
     type Item = (&'a L, &'a R);
@@ -985,10 +985,8 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         match self.iter.next()? {
             SomeBoth(l, r) => unsafe { Some((&l.as_ref().value, &r.as_ref().value)) },
-            SomeLeft(_) => { unreachable!("Got some left."); }
-            SomeRight(r) => { unreachable!("Got some right: {:?}.", unsafe { r.as_ref() }); }
-            Neither => {
-                unreachable!("Got neither.");
+            _ => {
+                unreachable!("Internal state error: Unpaired item found in CycleMap");
             }
         }
     }
@@ -1000,8 +998,8 @@ where
 
 impl<L, R, S> ExactSizeIterator for Iter<'_, L, R, S>
 where
-    L: Hash + Eq + Debug,
-    R: Hash + Eq + Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
     fn len(&self) -> usize {
@@ -1011,8 +1009,8 @@ where
 
 impl<L, R, S> FusedIterator for Iter<'_, L, R, S>
 where
-    L: Hash + Eq + Debug,
-    R: Hash + Eq + Debug,
+    L: Hash + Eq,
+    R: Hash + Eq,
     S: BuildHasher,
 {
 }

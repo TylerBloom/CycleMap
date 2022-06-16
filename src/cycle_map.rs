@@ -1,7 +1,7 @@
 use std::{
     borrow::Borrow,
     default::Default,
-    fmt,
+    fmt::{self, Debug},
     hash::{BuildHasher, Hash},
     iter::FusedIterator,
 };
@@ -98,8 +98,8 @@ impl<L, R> CycleMap<L, R, DefaultHashBuilder> {
 
 impl<L, R, S> CycleMap<L, R, S>
 where
-    L: Eq + Hash,
-    R: Eq + Hash,
+    L: Eq + Hash + Debug,
+    R: Eq + Hash + Debug,
     S: BuildHasher,
 {
     /// Adds a pair of items to the map.
@@ -215,8 +215,10 @@ where
     /// assert_eq!(map.remove_via_left(&1), None);
     /// ```
     pub fn remove_via_left(&mut self, item: &L) -> Option<(L, R)> {
-        let left = self.table.remove_left(item)?;
-        let right = self.table.remove_via_left(item).unwrap();
+        // This order of these operations matter
+        // `remove_via_left` gets a left pairing to get a right pairing
+        let right = self.table.remove_via_left(item)?;
+        let left = self.table.remove_left(item).unwrap();
         Some((left.extract(), right.extract()))
     }
 
@@ -233,6 +235,7 @@ where
     /// assert_eq!(map.remove_via_right(&"1"), None);
     /// ```
     pub fn remove_via_right(&mut self, item: &R) -> Option<(L, R)> {
+        // This order of these operations matter
         let left = self.table.remove_via_right(item)?;
         let right = self.table.remove_right(item).unwrap();
         Some((left.extract(), right.extract()))
@@ -279,12 +282,15 @@ where
         // Check for Eq left item and remove that cycle if it exists
         let eq_opt = self.remove_via_left(&new);
         // Insert and pair the new item
-        let new_l_item = self.table.insert_left(new);
-        let r_item = self.table.find_right(&old_l_item).unwrap();
-        unsafe {
-            self.table
-                .pair(&(*new_l_item).value, &r_item.as_ref().value);
-        }
+        let new_l_bucket = self.table.insert_left(new);
+        let r_bucket = self.table.find_right(&old_l_item).unwrap();
+        let mut r_item = unsafe { r_bucket.as_mut() };
+        let mut l_item = unsafe { new_l_bucket.as_mut() };
+        // Manually pair the item
+        l_item.hash = Some(self.table.hash(&r_item.value));
+        r_item.hash = Some(self.table.hash(&l_item.value));
+        l_item.id = r_item.id;
+        self.table.counter -= 1;
         OptionalPair::from((Some(old_l_item.extract()), eq_opt))
     }
 
@@ -382,7 +388,8 @@ where
     /// assert_eq!(op, SomeBoth("84".to_string(),(0, "0".to_string())));
     /// assert!(map.are_paired(&84, &"0".to_string()));
     /// ```
-    pub fn swap_right(&mut self, old: &R, new: R) -> OptionalPair<R, (L, R)> {
+    pub fn swap_right(&mut self, old: &R, new: R) -> OptionalPair<R, (L, R)>
+    {
         // Remove the old left pairing
         let old_r_item = match self.table.remove_right(old) {
             Some(r) => r,
@@ -393,12 +400,15 @@ where
         // Check for Eq left item and remove that cycle if it exists
         let eq_opt = self.remove_via_right(&new);
         // Insert and pair the new item
-        let new_r_item = self.table.insert_right(new);
-        let l_item = self.table.find_left(&old_r_item).unwrap();
-        unsafe {
-            self.table
-                .pair(&l_item.as_ref().value, &(*new_r_item).value);
-        }
+        let new_r_bucket = self.table.insert_right(new);
+        let l_bucket = self.table.find_left(&old_r_item).unwrap();
+        let mut l_item = unsafe { l_bucket.as_mut() };
+        let mut r_item = unsafe { new_r_bucket.as_mut() };
+        // Manually pair the item
+        l_item.hash = Some(self.table.hash(&r_item.value));
+        r_item.hash = Some(self.table.hash(&l_item.value));
+        r_item.id = l_item.id;
+        self.table.counter -= 1;
         OptionalPair::from((Some(old_r_item.extract()), eq_opt))
     }
 
@@ -894,8 +904,8 @@ where
 
 impl<L, R, S> PartialEq<CycleMap<L, R, S>> for CycleMap<L, R, S>
 where
-    L: Hash + Eq,
-    R: Hash + Eq,
+    L: Hash + Eq + Debug,
+    R: Hash + Eq + Debug,
     S: BuildHasher,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -908,16 +918,16 @@ where
 
 impl<L, R, S> Eq for CycleMap<L, R, S>
 where
-    L: Hash + Eq,
-    R: Hash + Eq,
+    L: Hash + Eq + Debug,
+    R: Hash + Eq + Debug,
     S: BuildHasher,
 {
 }
 
 impl<L, R, S> Extend<(L, R)> for CycleMap<L, R, S>
 where
-    L: Hash + Eq,
-    R: Hash + Eq,
+    L: Hash + Eq + Debug,
+    R: Hash + Eq + Debug,
     S: BuildHasher,
 {
     #[inline]
@@ -930,8 +940,8 @@ where
 
 impl<L, R> FromIterator<(L, R)> for CycleMap<L, R>
 where
-    L: Hash + Eq,
-    R: Hash + Eq,
+    L: Hash + Eq + Debug,
+    R: Hash + Eq + Debug,
 {
     fn from_iter<T: IntoIterator<Item = (L, R)>>(iter: T) -> Self {
         let mut digest = CycleMap::default();
@@ -1154,7 +1164,7 @@ where
                 Some(right) => {
                     let l = unsafe { &left.as_ref().value };
                     let r = unsafe { &right.as_ref().value };
-                    if !(self.f)(l, r) {
+                    if (self.f)(l, r) {
                         let (left, right) = self.map_ref.remove(l, r).unwrap();
                         return Some((left.extract(), right.extract()));
                     } else {

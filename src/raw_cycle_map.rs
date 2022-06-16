@@ -73,12 +73,19 @@ where
     R: Eq + Hash,
     S: BuildHasher,
 {
+    #[inline]
+    pub fn hash<Q>(&self, item: Q) -> u64 
+        where Q: Hash
+    {
+        make_hash::<Q, S>(&self.hash_builder, &item)
+    }
+    
     /// Adds a pair of items to the map.
     ///
     /// Note: There is no check for items that are equal.
-    pub fn insert(&mut self, left: L, right: R) {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
+    pub fn insert(&mut self, left: L, right: R) -> (Bucket<MappingItem<L>>, Bucket<MappingItem<R>>) {
+        let l_hash = self.hash(&left);
+        let r_hash = self.hash(&right);
         let left_pairing = MappingItem {
             value: left,
             hash: Some(r_hash),
@@ -90,23 +97,24 @@ where
             id: self.counter,
         };
         self.counter += 1;
-        self.left_set.insert(
+        let l = self.left_set.insert(
             l_hash,
             left_pairing,
             make_hasher::<MappingItem<L>, S>(&self.hash_builder),
         );
-        self.right_set.insert(
+        let r = self.right_set.insert(
             r_hash,
             right_pairing,
             make_hasher::<MappingItem<R>, S>(&self.hash_builder),
         );
+        (l, r)
     }
 
     /// Adds an item to the left set of the map.
     ///
     /// Note: There is no check for items that are equal.
-    pub fn insert_left(&mut self, left: L) -> *mut MappingItem<L> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
+    pub fn insert_left(&mut self, left: L) -> Bucket<MappingItem<L>> {
+        let l_hash = self.hash(&left);
         let left_pairing = MappingItem {
             value: left,
             hash: None,
@@ -119,14 +127,13 @@ where
                 left_pairing,
                 make_hasher::<MappingItem<L>, S>(&self.hash_builder),
             )
-            .as_ptr()
     }
 
     /// Adds an item to the right set of the map.
     ///
     /// Note: There is no check for items that are equal.
-    pub fn insert_right(&mut self, right: R) -> *mut MappingItem<R> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
+    pub fn insert_right(&mut self, right: R) -> Bucket<MappingItem<R>> {
+        let r_hash = self.hash(&right);
         let right_pairing = MappingItem {
             value: right,
             hash: None,
@@ -139,14 +146,13 @@ where
                 right_pairing,
                 make_hasher::<MappingItem<R>, S>(&self.hash_builder),
             )
-            .as_ptr()
     }
 
     /// Pairs two existing items in the map. Returns `true` if they were successfully paired.
     /// Returns `false` if either item can not be found or if either items is already paired.
     pub fn pair(&mut self, left: &L, right: &R) -> bool {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+        let l_hash = self.hash(left);
+        let r_hash = self.hash(right);
         let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
         let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
@@ -169,8 +175,8 @@ where
         if self.are_paired(l, r) {
             return Neither;
         }
-        let l_hash = make_hash::<L, S>(&self.hash_builder, l);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, r);
+        let l_hash = self.hash(l);
+        let r_hash = self.hash(r);
         let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
         let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
         match (opt_left, opt_right) {
@@ -242,8 +248,8 @@ where
         if self.are_paired(l, r) {
             return Neither;
         }
-        let l_hash = make_hash::<L, S>(&self.hash_builder, l);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, r);
+        let l_hash = self.hash(l);
+        let r_hash = self.hash(r);
         let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
         let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
         match (opt_left, opt_right) {
@@ -310,8 +316,8 @@ where
     /// Unpairs two existing items in the map. Returns `true` if they were successfully unpaired.
     /// Returns `false` if either item can not be found or if they aren't paired.
     pub fn unpair(&mut self, left: &L, right: &R) -> bool {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+        let l_hash = self.hash(left);
+        let r_hash = self.hash(right);
         let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
         let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
@@ -337,7 +343,7 @@ where
     ///
     /// Returns false if the item isn't found or is unpaired. Returns true otherwise.
     pub fn is_left_paired(&self, left: &L) -> bool {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
+        let l_hash = self.hash(left);
         let opt_left = self.left_set.get(l_hash, equivalent_key(left));
         match opt_left {
             Some(l) => l.hash.is_some(),
@@ -349,7 +355,7 @@ where
     ///
     /// Returns false if the item isn't found or is unpaired. Returns true otherwise.
     pub fn is_right_paired(&self, right: &R) -> bool {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+        let r_hash = self.hash(right);
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match opt_right {
             Some(r) => r.hash.is_some(),
@@ -360,8 +366,8 @@ where
     /// Returns `true` if both items are in the map and are paired together; otherwise, returns
     /// `false`.
     pub fn are_paired(&self, left: &L, right: &R) -> bool {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-        let r_hash = make_hash::<R, S>(&self.hash_builder, right);
+        let l_hash = self.hash(left);
+        let r_hash = self.hash(right);
         let opt_left = self.left_set.get(l_hash, equivalent_key(left));
         let opt_right = self.right_set.get(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
@@ -374,13 +380,13 @@ where
 
     /// Returns `true` if the item is found and `false` otherwise.
     pub fn contains_left(&self, left: &L) -> bool {
-        let hash = make_hash::<L, S>(&self.hash_builder, left);
+        let hash = self.hash(left);
         self.left_set.get(hash, equivalent_key(left)).is_some()
     }
 
     /// Returns `true` if the item is found and `false` otherwise.
     pub fn contains_right(&self, right: &R) -> bool {
-        let hash = make_hash::<R, S>(&self.hash_builder, right);
+        let hash = self.hash(right);
         self.right_set.get(hash, equivalent_key(right)).is_some()
     }
 
@@ -400,7 +406,7 @@ where
     ///
     /// Note: If it exists, the associated right pairing is unchanged here.
     pub fn remove_left(&mut self, item: &L) -> Option<MappingItem<L>> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+        let l_hash = self.hash(item);
         self.left_set.remove_entry(l_hash, equivalent_key(item))
     }
 
@@ -408,7 +414,7 @@ where
     ///
     /// Note: The left pairing is unchanged here.
     pub fn remove_via_left(&mut self, item: &L) -> Option<MappingItem<R>> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+        let l_hash = self.hash(item);
         let left_pairing = self.left_set.get(l_hash, equivalent_key(item))?;
         self.right_set.remove_entry(
             *left_pairing.hash.as_ref()?,
@@ -421,7 +427,7 @@ where
     ///
     /// Note: If it exists, the associated left pairing is unchanged here.
     pub fn remove_right(&mut self, item: &R) -> Option<MappingItem<R>> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let r_hash = self.hash(item);
         self.right_set.remove_entry(r_hash, equivalent_key(item))
     }
 
@@ -429,7 +435,7 @@ where
     ///
     /// Note: The left pairing is unchanged here.
     pub fn remove_via_right(&mut self, item: &R) -> Option<MappingItem<L>> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let r_hash = self.hash(item);
         let right_pairing = self.right_set.get(r_hash, equivalent_key(item))?;
         self.left_set.remove_entry(
             *right_pairing.hash.as_ref()?,
@@ -451,7 +457,7 @@ where
 
     /// Gets a reference to an item in the left set using an item in the right set.
     pub fn get_left(&self, item: &R) -> Option<&MappingItem<L>> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let r_hash = self.hash(item);
         let right_pairing: &MappingItem<R> = self.get_right_inner_with_hash(item, r_hash)?;
         let hash = right_pairing.hash?;
         self.left_set
@@ -466,7 +472,7 @@ where
 
     /// Gets a reference to an item in the left set using an item in the right set.
     pub fn get_left_mut(&mut self, item: &R) -> Option<&mut MappingItem<L>> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+        let r_hash = self.hash(item);
         let right_pairing: &MappingItem<R> = self.get_right_inner_with_hash(item, r_hash)?;
         let hash = right_pairing.hash?;
         self.left_set
@@ -475,7 +481,7 @@ where
 
     /// Gets a reference to an item in the right set using an item in the left set.
     pub fn get_right(&self, item: &L) -> Option<&MappingItem<R>> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+        let l_hash = self.hash(item);
         let left_pairing: &MappingItem<L> = self.get_left_inner_with_hash(item, l_hash)?;
         let hash = left_pairing.hash?;
         self.right_set
@@ -484,7 +490,7 @@ where
 
     /// Gets a reference to an item in the right set using an item in the left set.
     pub fn get_right_mut(&mut self, item: &L) -> Option<&mut MappingItem<R>> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+        let l_hash = self.hash(item);
         let left_pairing: &MappingItem<L> = self.get_left_inner_with_hash(item, l_hash)?;
         let hash = left_pairing.hash?;
         self.right_set
@@ -526,7 +532,7 @@ where
     #[inline]
     /// Gets a left pairing with a left item
     pub fn get_left_inner(&self, item: &L) -> Option<&MappingItem<L>> {
-        let hash = make_hash::<L, S>(&self.hash_builder, item);
+        let hash = self.hash(item);
         self.left_set.get(hash, equivalent_key(item))
     }
 
@@ -539,7 +545,7 @@ where
     #[inline]
     /// Gets a right pairing with a right item
     pub fn get_right_inner(&self, item: &R) -> Option<&MappingItem<R>> {
-        let hash = make_hash::<R, S>(&self.hash_builder, item);
+        let hash = self.hash(item);
         self.right_set.get(hash, equivalent_key(item))
     }
 

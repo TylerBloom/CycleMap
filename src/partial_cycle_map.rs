@@ -46,10 +46,10 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 }
 
 /// A map similar to [`CycleMap`] but items in either set can unpaired.
-/// 
+///
 /// `PartialCycleMap` takes loosens the pairing requirement of a `CycleMap`, but the other
 /// requirements (namely that values must implement [`Eq`] and [`Hash`]) remain.
-/// 
+///
 /// The enum [`OptionalPair`] is used extensively throughout the `PartialCycleMap` since full pairs
 /// often can't be be guaranteed. `OptionalPair` helps to express this by giving a more ergonomic
 /// feel to its equivalent representation, `(Option<A>, Option<B>)` or `Option<(Option<A>,
@@ -64,7 +64,7 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// use cycle_map::{PartialCycleMap, OptionalPair};
 /// use OptionalPair::*;
 ///
-/// let values: Vec<OptionalPair<&str, u64>> = 
+/// let values: Vec<OptionalPair<&str, u64>> =
 ///              vec![ SomeBoth("zero", 0), SomeBoth("one", 1), SomeBoth("two", 2),
 ///                    SomeBoth("three", 3), SomeBoth("four", 4), SomeBoth("five", 5),
 ///                    SomeLeft("six"), SomeLeft("seven"), SomeLeft("eight"),
@@ -92,7 +92,7 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// assert_eq!(converter.remove_right(&4), Some(4));
 /// assert!(converter.unpair(&"three", &3));
 /// assert!(!converter.are_paired(&"three", &3));
-/// 
+///
 /// // Bring items together!
 /// assert!(converter.pair(&"three", &3));
 /// assert!(converter.are_paired(&"three", &3));
@@ -530,7 +530,7 @@ where
             _ => Neither,
         }
     }
-    
+
     /// Unpairs two existing items in the map. Returns `true` if they were successfully unpaired.
     /// Returns `false` if either item can not be found or if they aren't paired.
     ///
@@ -559,7 +559,7 @@ where
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => match (left.hash, right.hash) {
                 (Some(l_h), Some(r_h)) => {
-                    if l_hash  == r_h && r_hash == l_h {
+                    if l_hash == r_h && r_hash == l_h {
                         left.hash = None;
                         right.hash = None;
                         right.id = self.counter;

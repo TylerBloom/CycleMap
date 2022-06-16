@@ -1,5 +1,4 @@
 use std::{
-    borrow::Borrow,
     default::Default,
     fmt,
     hash::{BuildHasher, Hash},
@@ -12,7 +11,9 @@ use hashbrown::{hash_map::DefaultHashBuilder, TryReserveError};
 
 use crate::{
     optionals::*,
-    raw_cycle_map::{RawCycleMap, RawDrainIter, RawIter, RawSingleIter, MappingItem},
+    raw_cycle_map::{
+        equivalent_key, just_id, MappingItem, RawCycleMap, RawDrainIter, RawIter, RawSingleIter,
+    },
 };
 use OptionalPair::*;
 
@@ -102,6 +103,14 @@ where
     R: Eq + Hash,
     S: BuildHasher,
 {
+    #[inline]
+    fn hash<Q>(&self, item: &Q) -> u64
+    where
+        Q: Hash,
+    {
+        self.table.hash(item)
+    }
+
     /// Adds a pair of items to the map.
     ///
     /// Should the left element be equal to another left element, the pair containing the old left
@@ -130,6 +139,8 @@ where
     /// assert_eq!(op, SomeBoth((2, 2.to_string()),(3, 3.to_string())));
     /// ```
     pub fn insert(&mut self, left: L, right: R) -> InsertOptional<L, R> {
+        // TODO: This seems wasteful. Each item has its hash calculated 3 times before being
+        // inserted...
         let opt_from_left = self.remove_via_left(&left);
         let opt_from_right = self.remove_via_right(&right);
         self.table.insert(left, right);
@@ -215,10 +226,12 @@ where
     /// assert_eq!(map.remove_via_left(&1), None);
     /// ```
     pub fn remove_via_left(&mut self, item: &L) -> Option<(L, R)> {
-        // This order of these operations matter
-        // `remove_via_left` gets a left pairing to get a right pairing
-        let right = self.table.remove_via_left(item)?;
-        let left = self.table.remove_left(item).unwrap();
+        let left = self
+            .table
+            .remove_left(self.table.hash(item), equivalent_key(item))?;
+        let right = self
+            .table
+            .remove_right(*left.hash.as_ref()?, just_id(left.id))?;
         Some((left.extract(), right.extract()))
     }
 
@@ -235,9 +248,12 @@ where
     /// assert_eq!(map.remove_via_right(&"1"), None);
     /// ```
     pub fn remove_via_right(&mut self, item: &R) -> Option<(L, R)> {
-        // This order of these operations matter
-        let left = self.table.remove_via_right(item)?;
-        let right = self.table.remove_right(item).unwrap();
+        let right = self
+            .table
+            .remove_right(self.table.hash(item), equivalent_key(item))?;
+        let left = self
+            .table
+            .remove_left(*right.hash.as_ref()?, just_id(right.id))?;
         Some((left.extract(), right.extract()))
     }
 
@@ -273,7 +289,7 @@ where
     /// ```
     pub fn swap_left(&mut self, old: &L, new: L) -> OptionalPair<L, (L, R)> {
         // Remove the old left pairing
-        let old_l_item = match self.table.remove_left(old) {
+        let old_l_item = match self.table.remove_left(self.hash(old), equivalent_key(old)) {
             Some(l) => l,
             None => {
                 return Neither;
@@ -283,13 +299,16 @@ where
         let eq_opt = self.remove_via_left(&new);
         // Insert and pair the new item
         let new_l_bucket = self.table.insert_left(new);
-        let r_bucket = self.table.find_right(&old_l_item).unwrap();
-        let mut r_item = unsafe { r_bucket.as_mut() };
-        let mut l_item = unsafe { new_l_bucket.as_mut() };
-        // Manually pair the item
-        l_item.hash = Some(self.table.hash(&r_item.value));
-        r_item.hash = Some(self.table.hash(&l_item.value));
-        l_item.id = r_item.id;
+        let r_bucket = self
+            .table
+            .find_right(old_l_item.hash.unwrap(), just_id(old_l_item.id))
+            .unwrap();
+        // Manually pair the items
+        let mut left_item = unsafe { new_l_bucket.as_mut() };
+        let mut right_item = unsafe { r_bucket.as_mut() };
+        right_item.hash = Some(self.hash(&left_item.value));
+        left_item.hash = old_l_item.hash;
+        left_item.id = right_item.id;
         self.table.counter -= 1;
         OptionalPair::from((Some(old_l_item.extract()), eq_opt))
     }
@@ -388,26 +407,28 @@ where
     /// assert_eq!(op, SomeBoth("84".to_string(),(0, "0".to_string())));
     /// assert!(map.are_paired(&84, &"0".to_string()));
     /// ```
-    pub fn swap_right(&mut self, old: &R, new: R) -> OptionalPair<R, (L, R)>
-    {
-        // Remove the old left pairing
-        let old_r_item = match self.table.remove_right(old) {
+    pub fn swap_right(&mut self, old: &R, new: R) -> OptionalPair<R, (L, R)> {
+        // Remove the old right pairing
+        let old_r_item = match self.table.remove_right(self.hash(old), equivalent_key(old)) {
             Some(r) => r,
             None => {
                 return Neither;
             }
         };
-        // Check for Eq left item and remove that cycle if it exists
+        // Check for Eq right item and remove that cycle if it exists
         let eq_opt = self.remove_via_right(&new);
         // Insert and pair the new item
         let new_r_bucket = self.table.insert_right(new);
-        let l_bucket = self.table.find_left(&old_r_item).unwrap();
-        let mut l_item = unsafe { l_bucket.as_mut() };
-        let mut r_item = unsafe { new_r_bucket.as_mut() };
-        // Manually pair the item
-        l_item.hash = Some(self.table.hash(&r_item.value));
-        r_item.hash = Some(self.table.hash(&l_item.value));
-        r_item.id = l_item.id;
+        let l_bucket = self
+            .table
+            .find_left(old_r_item.hash.unwrap(), just_id(old_r_item.id))
+            .unwrap();
+        // Manually pair the items
+        let mut left_item = unsafe { l_bucket.as_mut() };
+        let mut right_item = unsafe { new_r_bucket.as_mut() };
+        left_item.hash = Some(self.hash(&right_item.value));
+        right_item.hash = old_r_item.hash;
+        right_item.id = left_item.id;
         self.table.counter -= 1;
         OptionalPair::from((Some(old_r_item.extract()), eq_opt))
     }
@@ -488,11 +509,13 @@ where
     /// assert_eq!(map.get_left(&"1"), Some(&1));
     /// assert_eq!(map.get_left(&"2"), None);
     /// ```
-    pub fn get_left<Q>(&self, item: &Q) -> Option<&L>
-    where
-        Q: Borrow<R>,
-    {
-        self.table.get_left(item.borrow()).map(|l| &l.value)
+    pub fn get_left(&self, item: &R) -> Option<&L> {
+        let right_item = self
+            .table
+            .get_right(self.hash(item), equivalent_key(item))?;
+        self.table
+            .get_left(right_item.hash?, just_id(right_item.id))
+            .map(|l| &l.value)
     }
 
     /// Gets a reference to an item in the right set using an item in the left set.
@@ -506,7 +529,10 @@ where
     /// assert_eq!(map.get_right(&2), None);
     /// ```
     pub fn get_right(&self, item: &L) -> Option<&R> {
-        self.table.get_right(item).map(|r| &r.value)
+        let left_item = self.table.get_left(self.hash(item), equivalent_key(item))?;
+        self.table
+            .get_right(left_item.hash?, just_id(left_item.id))
+            .map(|r| &r.value)
     }
 
     /// Returns an iterator that visits all the pairs in the map in an arbitary order.
@@ -649,12 +675,15 @@ where
         F: FnMut(&L, &R) -> bool,
     {
         for left in unsafe { self.table.left_set.iter() } {
-            match self.table.find_right(unsafe { left.as_ref() }) {
+            let left_item = unsafe { left.as_ref() };
+            match self
+                .table
+                .find_right(left_item.hash.unwrap(), just_id(left_item.id))
+            {
                 Some(right) => {
-                    let l = unsafe { &left.as_ref().value };
                     let r = unsafe { &right.as_ref().value };
-                    if !f(l, r) {
-                        self.remove(l, r);
+                    if !f(&left_item.value, r) {
+                        self.remove(&left_item.value, r);
                     }
                 }
                 _ => {
@@ -1160,12 +1189,15 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(left) = self.iter.next() {
-            match self.map_ref.find_right(unsafe { left.as_ref() }) {
+            let left_item = unsafe { left.as_ref() };
+            match self
+                .map_ref
+                .find_right(left_item.hash.unwrap(), just_id(left_item.id))
+            {
                 Some(right) => {
-                    let l = unsafe { &left.as_ref().value };
                     let r = unsafe { &right.as_ref().value };
-                    if (self.f)(l, r) {
-                        let (left, right) = self.map_ref.remove(l, r).unwrap();
+                    if (self.f)(&left_item.value, r) {
+                        let (left, right) = self.map_ref.remove(&left_item.value, r).unwrap();
                         return Some((left.extract(), right.extract()));
                     } else {
                         continue;

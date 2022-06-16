@@ -74,16 +74,21 @@ where
     S: BuildHasher,
 {
     #[inline]
-    pub fn hash<Q>(&self, item: Q) -> u64 
-        where Q: Hash
+    pub fn hash<Q>(&self, item: &Q) -> u64
+    where
+        Q: Hash,
     {
-        make_hash::<Q, S>(&self.hash_builder, &item)
+        make_hash::<Q, S>(&self.hash_builder, item)
     }
-    
+
     /// Adds a pair of items to the map.
     ///
     /// Note: There is no check for items that are equal.
-    pub fn insert(&mut self, left: L, right: R) -> (Bucket<MappingItem<L>>, Bucket<MappingItem<R>>) {
+    pub fn insert(
+        &mut self,
+        left: L,
+        right: R,
+    ) -> (Bucket<MappingItem<L>>, Bucket<MappingItem<R>>) {
         let l_hash = self.hash(&left);
         let r_hash = self.hash(&right);
         let left_pairing = MappingItem {
@@ -121,12 +126,11 @@ where
             id: self.counter,
         };
         self.counter += 1;
-        self.left_set
-            .insert(
-                l_hash,
-                left_pairing,
-                make_hasher::<MappingItem<L>, S>(&self.hash_builder),
-            )
+        self.left_set.insert(
+            l_hash,
+            left_pairing,
+            make_hasher::<MappingItem<L>, S>(&self.hash_builder),
+        )
     }
 
     /// Adds an item to the right set of the map.
@@ -140,201 +144,177 @@ where
             id: self.counter,
         };
         self.counter += 1;
-        self.right_set
-            .insert(
-                r_hash,
-                right_pairing,
-                make_hasher::<MappingItem<R>, S>(&self.hash_builder),
-            )
+        self.right_set.insert(
+            r_hash,
+            right_pairing,
+            make_hasher::<MappingItem<R>, S>(&self.hash_builder),
+        )
     }
 
     /// Pairs two existing items in the map. Returns `true` if they were successfully paired.
     /// Returns `false` if either item can not be found or if either items is already paired.
-    pub fn pair(&mut self, left: &L, right: &R) -> bool {
-        let l_hash = self.hash(left);
-        let r_hash = self.hash(right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
-        match (opt_left, opt_right) {
-            (Some(left), Some(right)) => match (left.hash, right.hash) {
-                (None, None) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    right.id = left.id;
-                    true
-                }
-                _ => false,
-            },
+    pub fn pair(
+        &mut self,
+        left_item: &mut MappingItem<L>,
+        right_item: &mut MappingItem<R>,
+    ) -> bool {
+        match (left_item.hash, right_item.hash) {
+            (None, None) => {
+                left_item.hash = Some(self.hash(&right_item.value));
+                right_item.hash = Some(self.hash(&left_item.value));
+                right_item.id = left_item.id;
+                true
+            }
             _ => false,
         }
     }
 
     /// Pairs two existing items in the map. Items that are paired become unpaired but remain in
     /// the map. References to items that become unpaired are returned.
-    pub fn pair_forced(&mut self, l: &L, r: &R) -> OptionalPair<&L, &R> {
-        if self.are_paired(l, r) {
-            return Neither;
-        }
-        let l_hash = self.hash(l);
-        let r_hash = self.hash(r);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
-        match (opt_left, opt_right) {
-            (Some(left), Some(right)) => match (left.hash, right.hash) {
-                (None, None) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    right.id = left.id;
-                    Neither
-                }
-                (Some(lp_hash), None) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    let old_id = left.id;
-                    // Here, we give the left item the new id to avoid a collision in the right set
-                    left.id = right.id;
-                    self.right_set
-                        .get_mut(lp_hash, hash_and_id(l_hash, old_id))
+    pub fn pair_forced(
+        &mut self,
+        left_item: &mut MappingItem<L>,
+        right_item: &mut MappingItem<R>,
+    ) -> OptionalPair<&L, &R> {
+        match (left_item.hash, right_item.hash) {
+            (None, None) => {
+                left_item.hash = Some(self.hash(&right_item.value));
+                right_item.hash = Some(self.hash(&left_item.value));
+                right_item.id = left_item.id;
+                Neither
+            }
+            (Some(lp_hash), None) => {
+                let old_r_item = unsafe {
+                    self.find_right(lp_hash, just_id(left_item.id))
                         .unwrap()
-                        .hash = None;
-                    SomeRight(&self.right_set.get(lp_hash, just_id(old_id)).unwrap().value)
-                }
-                (None, Some(rp_hash)) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    let old_id = right.id;
-                    // Here, we give the right item the new id to avoid a collision in the left set
-                    right.id = left.id;
-                    self.left_set
-                        .get_mut(rp_hash, hash_and_id(r_hash, old_id))
+                        .as_mut()
+                };
+                let l_hash = old_r_item.hash.unwrap();
+                old_r_item.hash = None;
+                right_item.hash = Some(l_hash);
+                left_item.hash = Some(self.hash(&right_item.value));
+                left_item.id = right_item.id;
+                SomeRight(&old_r_item.value)
+            }
+            (None, Some(rp_hash)) => {
+                let old_l_item = unsafe {
+                    self.find_left(rp_hash, just_id(right_item.id))
                         .unwrap()
-                        .hash = None;
-                    SomeLeft(&self.left_set.get(rp_hash, just_id(old_id)).unwrap().value)
+                        .as_mut()
+                };
+                let l_hash = old_l_item.hash.unwrap();
+                old_l_item.hash = None;
+                right_item.hash = Some(l_hash);
+                left_item.hash = Some(self.hash(&right_item.value));
+                right_item.id = left_item.id;
+                SomeLeft(&old_l_item.value)
+            }
+            (Some(lp_hash), Some(rp_hash)) => {
+                // If they are already paired, problems will occur.
+                if right_item.id == left_item.id {
+                    return Neither;
                 }
-                (Some(lp_hash), Some(rp_hash)) => {
-                    left.hash = Some(r_hash);
-                    right.hash = Some(l_hash);
-                    let old_l_id = left.id;
-                    let old_r_id = right.id;
-                    // Here, we give the pair a new id to avoid collisions in both sets
-                    left.id = self.counter;
-                    right.id = self.counter;
-                    self.counter += 1;
-                    self.left_set
-                        .get_mut(rp_hash, hash_and_id(r_hash, old_r_id))
+                let count = self.counter;
+                self.counter += 1;
+                let old_l_item = unsafe {
+                    self.find_left(rp_hash, just_id(right_item.id))
                         .unwrap()
-                        .hash = None;
-                    self.right_set
-                        .get_mut(lp_hash, hash_and_id(l_hash, old_l_id))
+                        .as_mut()
+                };
+                let l_hash = old_l_item.hash.unwrap();
+                old_l_item.hash = None;
+                let old_r_item = unsafe {
+                    self.find_right(lp_hash, just_id(left_item.id))
                         .unwrap()
-                        .hash = None;
-                    SomeBoth(
-                        &self.left_set.get(rp_hash, just_id(old_r_id)).unwrap().value,
-                        &self
-                            .right_set
-                            .get(lp_hash, just_id(old_l_id))
-                            .unwrap()
-                            .value,
-                    )
-                }
-            },
-            _ => Neither,
+                        .as_mut()
+                };
+                let r_hash = old_r_item.hash.unwrap();
+                old_r_item.hash = None;
+                left_item.hash = Some(r_hash);
+                right_item.hash = Some(l_hash);
+                left_item.id = count;
+                right_item.id = count;
+                SomeBoth(&old_l_item.value, &old_r_item.value)
+            }
         }
     }
 
     /// Pairs two existing items in the map. Items that are paired become unpaired and are removed
     /// from the map. The old items are returned.
-    pub fn pair_remove(&mut self, l: &L, r: &R) -> OptionalPair<L, R> {
-        if self.are_paired(l, r) {
-            return Neither;
-        }
-        let l_hash = self.hash(l);
-        let r_hash = self.hash(r);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
-        match (opt_left, opt_right) {
-            (Some(left), Some(right)) => {
-                match (left.hash, right.hash) {
-                    (None, None) => {
-                        left.hash = Some(r_hash);
-                        right.hash = Some(l_hash);
-                        right.id = left.id;
-                        Neither
-                    }
-                    (Some(lp_hash), None) => {
-                        left.hash = Some(r_hash);
-                        right.hash = Some(l_hash);
-                        let old_id = left.id;
-                        // Here, we give the left item the new id to avoid a collision in the right set
-                        left.id = right.id;
-                        SomeRight(
-                            self.right_set
-                                .remove_entry(lp_hash, just_id(old_id))
-                                .unwrap()
-                                .extract(),
-                        )
-                    }
-                    (None, Some(rp_hash)) => {
-                        left.hash = Some(r_hash);
-                        right.hash = Some(l_hash);
-                        let old_id = right.id;
-                        // Here, we give the left item the new id to avoid a collision in the right set
-                        right.id = left.id;
-                        SomeLeft(
-                            self.left_set
-                                .remove_entry(rp_hash, hash_and_id(r_hash, old_id))
-                                .unwrap()
-                                .extract(),
-                        )
-                    }
-                    (Some(lp_hash), Some(rp_hash)) => {
-                        left.hash = Some(r_hash);
-                        right.hash = Some(l_hash);
-                        let old_l_id = left.id;
-                        let old_r_id = right.id;
-                        // Here, we give the pair a new id to avoid collisions in both sets
-                        left.id = self.counter;
-                        right.id = self.counter;
-                        self.counter += 1;
-                        SomeBoth(
-                            self.left_set
-                                .remove_entry(rp_hash, just_id(old_r_id))
-                                .unwrap()
-                                .extract(),
-                            self.right_set
-                                .remove_entry(lp_hash, just_id(old_l_id))
-                                .unwrap()
-                                .extract(),
-                        )
-                    }
-                }
+    pub fn pair_remove(
+        &mut self,
+        left_item: &mut MappingItem<L>,
+        right_item: &mut MappingItem<R>,
+    ) -> OptionalPair<L, R> {
+        match (left_item.hash, right_item.hash) {
+            (None, None) => {
+                left_item.hash = Some(self.hash(&right_item.value));
+                right_item.hash = Some(self.hash(&left_item.value));
+                right_item.id = left_item.id;
+                Neither
             }
-            _ => Neither,
+            (Some(lp_hash), None) => {
+                let old_r_item = self
+                    .right_set
+                    .remove_entry(lp_hash, just_id(left_item.id))
+                    .unwrap();
+                right_item.hash = Some(old_r_item.hash.unwrap());
+                left_item.hash = Some(self.hash(&right_item.value));
+                left_item.id = right_item.id;
+                SomeRight(old_r_item.extract()) // Worried about "partial move"
+            }
+            (None, Some(rp_hash)) => {
+                let old_l_item = self
+                    .left_set
+                    .remove_entry(rp_hash, just_id(left_item.id))
+                    .unwrap();
+                left_item.hash = Some(old_l_item.hash.unwrap());
+                right_item.hash = Some(self.hash(&left_item.value));
+                right_item.id = left_item.id;
+                SomeLeft(old_l_item.extract())
+            }
+            (Some(lp_hash), Some(rp_hash)) => {
+                // If they are already paired, problems will occur.
+                if right_item.id == left_item.id {
+                    return Neither;
+                }
+                let old_l_item = self
+                    .left_set
+                    .remove_entry(rp_hash, just_id(right_item.id))
+                    .unwrap();
+                let old_r_item = self
+                    .right_set
+                    .remove_entry(lp_hash, just_id(left_item.id))
+                    .unwrap();
+                left_item.hash = Some(old_r_item.hash.unwrap());
+                right_item.hash = Some(old_l_item.hash.unwrap());
+                left_item.id = self.counter;
+                right_item.id = self.counter;
+                self.counter += 1;
+                SomeBoth(old_l_item.extract(), old_r_item.extract())
+            }
         }
     }
 
     /// Unpairs two existing items in the map. Returns `true` if they were successfully unpaired.
     /// Returns `false` if either item can not be found or if they aren't paired.
-    pub fn unpair(&mut self, left: &L, right: &R) -> bool {
-        let l_hash = self.hash(left);
-        let r_hash = self.hash(right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
-        match (opt_left, opt_right) {
-            (Some(left), Some(right)) => match (left.hash, right.hash) {
-                (Some(l_h), Some(r_h)) => {
-                    if l_hash == r_h && r_hash == l_h {
-                        left.hash = None;
-                        right.hash = None;
-                        right.id = self.counter;
-                        self.counter += 1;
-                        true
-                    } else {
-                        false
-                    }
+    pub fn unpair(
+        &mut self,
+        left_item: &mut MappingItem<L>,
+        right_item: &mut MappingItem<R>,
+    ) -> bool {
+        match (left_item.hash, right_item.hash) {
+            (Some(_), Some(_)) => {
+                if left_item.id == right_item.id {
+                    left_item.hash = None;
+                    right_item.hash = None;
+                    right_item.id = self.counter;
+                    self.counter += 1;
+                    true
+                } else {
+                    false
                 }
-                _ => false,
-            },
+            }
             _ => false,
         }
     }
@@ -393,8 +373,12 @@ where
     /// Removes and returns the give pair from the map provided that they are paired together.
     pub fn remove(&mut self, left: &L, right: &R) -> Option<(MappingItem<L>, MappingItem<R>)> {
         if self.are_paired(left, right) {
-            let l = self.remove_left(left).unwrap();
-            let r = self.remove_right(right).unwrap();
+            let l = self
+                .remove_left(self.hash(left), equivalent_key(left))
+                .unwrap();
+            let r = self
+                .remove_right(self.hash(right), equivalent_key(right))
+                .unwrap();
             Some((l, r))
         } else {
             None
@@ -405,154 +389,84 @@ where
     /// is paired.
     ///
     /// Note: If it exists, the associated right pairing is unchanged here.
-    pub fn remove_left(&mut self, item: &L) -> Option<MappingItem<L>> {
-        let l_hash = self.hash(item);
-        self.left_set.remove_entry(l_hash, equivalent_key(item))
-    }
-
-    /// Removes and returns the given item from the right set using a left item.
-    ///
-    /// Note: The left pairing is unchanged here.
-    pub fn remove_via_left(&mut self, item: &L) -> Option<MappingItem<R>> {
-        let l_hash = self.hash(item);
-        let left_pairing = self.left_set.get(l_hash, equivalent_key(item))?;
-        self.right_set.remove_entry(
-            *left_pairing.hash.as_ref()?,
-            hash_and_id(l_hash, left_pairing.id),
-        )
+    pub fn remove_left(
+        &mut self,
+        hash: u64,
+        eq: impl FnMut(&MappingItem<L>) -> bool,
+    ) -> Option<MappingItem<L>> {
+        self.left_set.remove_entry(hash, eq)
     }
 
     /// Removes and returns the given item from the left set and unpairs its associated item if it
     /// is paired.
     ///
     /// Note: If it exists, the associated left pairing is unchanged here.
-    pub fn remove_right(&mut self, item: &R) -> Option<MappingItem<R>> {
-        let r_hash = self.hash(item);
-        self.right_set.remove_entry(r_hash, equivalent_key(item))
-    }
-
-    /// Removes and returns the given item from the left set using a right item.
-    ///
-    /// Note: The left pairing is unchanged here.
-    pub fn remove_via_right(&mut self, item: &R) -> Option<MappingItem<L>> {
-        let r_hash = self.hash(item);
-        let right_pairing = self.right_set.get(r_hash, equivalent_key(item))?;
-        self.left_set.remove_entry(
-            *right_pairing.hash.as_ref()?,
-            hash_and_id(r_hash, right_pairing.id),
-        )
-    }
-
-    /// Removes a pair using the hash of the left item, right item, and their shared pairing id
-    pub fn remove_via_hashes_and_id(
+    pub fn remove_right(
         &mut self,
-        l_hash: u64,
-        r_hash: u64,
-        id: u64,
-    ) -> OptionalPair<MappingItem<L>, MappingItem<R>> {
-        let left_opt = self.left_set.remove_entry(l_hash, hash_and_id(r_hash, id));
-        let right_opt = self.right_set.remove_entry(r_hash, hash_and_id(l_hash, id));
-        OptionalPair::from((left_opt, right_opt))
+        hash: u64,
+        eq: impl FnMut(&MappingItem<R>) -> bool,
+    ) -> Option<MappingItem<R>> {
+        self.right_set.remove_entry(hash, eq)
     }
 
     /// Gets a reference to an item in the left set using an item in the right set.
-    pub fn get_left(&self, item: &R) -> Option<&MappingItem<L>> {
-        let r_hash = self.hash(item);
-        let right_pairing: &MappingItem<R> = self.get_right_inner_with_hash(item, r_hash)?;
-        let hash = right_pairing.hash?;
-        self.left_set
-            .get(hash, hash_and_id(r_hash, right_pairing.id))
-    }
-
-    /// Gets the bucket of an item in the right set using an item in the left set.
-    pub fn find_left(&self, item: &MappingItem<R>) -> Option<Bucket<MappingItem<L>>> {
-        let hash = item.hash?;
-        self.left_set.find(hash, just_id(item.id))
-    }
-
-    /// Gets a reference to an item in the left set using an item in the right set.
-    pub fn get_left_mut(&mut self, item: &R) -> Option<&mut MappingItem<L>> {
-        let r_hash = self.hash(item);
-        let right_pairing: &MappingItem<R> = self.get_right_inner_with_hash(item, r_hash)?;
-        let hash = right_pairing.hash?;
-        self.left_set
-            .get_mut(hash, hash_and_id(r_hash, right_pairing.id))
-    }
-
-    /// Gets a reference to an item in the right set using an item in the left set.
-    pub fn get_right(&self, item: &L) -> Option<&MappingItem<R>> {
-        let l_hash = self.hash(item);
-        let left_pairing: &MappingItem<L> = self.get_left_inner_with_hash(item, l_hash)?;
-        let hash = left_pairing.hash?;
-        self.right_set
-            .get(hash, hash_and_id(l_hash, left_pairing.id))
-    }
-
-    /// Gets a reference to an item in the right set using an item in the left set.
-    pub fn get_right_mut(&mut self, item: &L) -> Option<&mut MappingItem<R>> {
-        let l_hash = self.hash(item);
-        let left_pairing: &MappingItem<L> = self.get_left_inner_with_hash(item, l_hash)?;
-        let hash = left_pairing.hash?;
-        self.right_set
-            .get_mut(hash, hash_and_id(l_hash, left_pairing.id))
-    }
-
-    /// Gets the bucket of an item in the right set using an item in the left set.
-    pub fn find_right(&self, item: &MappingItem<L>) -> Option<Bucket<MappingItem<R>>> {
-        let hash = item.hash?;
-        self.right_set.find(hash, just_id(item.id))
-    }
-
-    /// Gets references to a pair using the hash of the left item, right item, and their
-    /// shared pairing id
-    pub fn get_via_hashes_and_id(
+    #[inline]
+    pub fn get_left(
         &self,
-        l_hash: u64,
-        r_hash: u64,
-        id: u64,
-    ) -> Option<(&MappingItem<L>, &MappingItem<R>)> {
-        let left_pairing = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
-        let right_pairing = self.right_set.get(r_hash, hash_and_id(l_hash, id))?;
-        Some((left_pairing, right_pairing))
+        hash: u64,
+        eq: impl FnMut(&MappingItem<L>) -> bool,
+    ) -> Option<&MappingItem<L>> {
+        self.left_set.get(hash, eq)
     }
 
-    /// Gets mutable references to a pair using the hash of the left item, right item, and their
-    /// shared pairing id
-    pub fn get_via_hashes_and_id_mut(
+    /// Gets a reference to an item in the left set using an item in the right set.
+    #[inline]
+    pub fn get_left_mut(
         &mut self,
-        l_hash: u64,
-        r_hash: u64,
-        id: u64,
-    ) -> Option<(&mut MappingItem<L>, &mut MappingItem<R>)> {
-        let left_pairing = self.left_set.get_mut(l_hash, hash_and_id(r_hash, id))?;
-        let right_pairing = self.right_set.get_mut(r_hash, hash_and_id(l_hash, id))?;
-        Some((left_pairing, right_pairing))
+        hash: u64,
+        eq: impl FnMut(&MappingItem<L>) -> bool,
+    ) -> Option<&mut MappingItem<L>> {
+        self.left_set.get_mut(hash, eq)
     }
 
+    /// Gets the bucket of an item in the right set using an item in the left set.
     #[inline]
-    /// Gets a left pairing with a left item
-    pub fn get_left_inner(&self, item: &L) -> Option<&MappingItem<L>> {
-        let hash = self.hash(item);
-        self.left_set.get(hash, equivalent_key(item))
+    pub fn find_left(
+        &self,
+        hash: u64,
+        eq: impl FnMut(&MappingItem<L>) -> bool,
+    ) -> Option<Bucket<MappingItem<L>>> {
+        self.left_set.find(hash, eq)
     }
 
+    /// Gets a reference to an item in the right set using an item in the left set.
     #[inline]
-    /// Gets a left pairing with a left item and its hash
-    pub fn get_left_inner_with_hash(&self, item: &L, hash: u64) -> Option<&MappingItem<L>> {
-        self.left_set.get(hash, equivalent_key(item))
+    pub fn get_right(
+        &self,
+        hash: u64,
+        eq: impl FnMut(&MappingItem<R>) -> bool,
+    ) -> Option<&MappingItem<R>> {
+        self.right_set.get(hash, eq)
     }
 
+    /// Gets a reference to an item in the right set using an item in the left set.
     #[inline]
-    /// Gets a right pairing with a right item
-    pub fn get_right_inner(&self, item: &R) -> Option<&MappingItem<R>> {
-        let hash = self.hash(item);
-        self.right_set.get(hash, equivalent_key(item))
+    pub fn get_right_mut(
+        &mut self,
+        hash: u64,
+        eq: impl FnMut(&MappingItem<R>) -> bool,
+    ) -> Option<&mut MappingItem<R>> {
+        self.right_set.get_mut(hash, eq)
     }
 
+    /// Gets the bucket of an item in the right set using an item in the left set.
     #[inline]
-    /// Gets a right pairing with a right item and its hash
-    pub fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&MappingItem<R>> {
-        self.right_set.get(hash, equivalent_key(item))
+    pub fn find_right(
+        &self,
+        hash: u64,
+        eq: impl FnMut(&MappingItem<R>) -> bool,
+    ) -> Option<Bucket<MappingItem<R>>> {
+        self.right_set.find(hash, eq)
     }
 
     /// Returns an iterator over the items in the map
@@ -905,10 +819,16 @@ where
     // TODO: This needs work. Both maps shouldn't need to be passed through...
     fn next(&mut self) -> Option<Self::Item> {
         match self.left_iter.next() {
-            Some(l) => match self.map_ref.find_right(unsafe { l.as_ref() }) {
-                Some(r) => Some(OptionalPair::SomeBoth(l, r)),
-                None => Some(OptionalPair::SomeLeft(l)),
-            },
+            Some(l) => {
+                let left_item = unsafe { l.as_ref() };
+                match left_item.hash {
+                    Some(h) => Some(OptionalPair::SomeBoth(
+                        l,
+                        self.map_ref.find_right(h, just_id(left_item.id)).unwrap(),
+                    )),
+                    None => Some(OptionalPair::SomeLeft(l)),
+                }
+            }
             None => {
                 while let Some(r) = self.right_iter.next() {
                     if unsafe { r.as_ref().hash.is_some() } {
@@ -982,21 +902,14 @@ where
     type Item = (Bucket<MappingItem<L>>, Bucket<MappingItem<R>>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(l_pairing) = self.left_iter.next() {
-            // Ignore all unpaired items
-            let l = unsafe { l_pairing.as_ref() };
-            if l.hash.is_none() {
+        while let Some(l_bucket) = self.left_iter.next() {
+            let l = unsafe { l_bucket.as_ref() };
+            if let Some(h) = l.hash {
+                let r_bucket = self.map_ref.find_right(h, just_id(l.id)).unwrap();
+                return Some((l_bucket, r_bucket));
+            } else {
                 continue;
             }
-            match self.map_ref.find_right(l) {
-                Some(r) => {
-                    return Some((l_pairing, r));
-                }
-                None => {
-                    // TODO: This shouldn't happen, but what if it does...
-                    continue;
-                }
-            };
         }
         None
     }
@@ -1205,10 +1118,7 @@ where
             // Not done with the left set yet
             Some(left) => match left.hash {
                 Some(hash) => {
-                    let right = self
-                        .right_ref
-                        .remove_entry(hash, just_id(left.id))
-                        .unwrap();
+                    let right = self.right_ref.remove_entry(hash, just_id(left.id)).unwrap();
                     Some(SomeBoth(left, right))
                 }
                 None => Some(SomeLeft(left)),

@@ -267,13 +267,13 @@ mod tests {
 
     #[test]
     fn drain_tests() {
-        let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
+        let mut map: CycleMap<u64, String> = (0..100).map(|i| (i, i.to_string())).collect();
         let cap = map.capacity();
         let other_map: CycleMap<u64, String> = map.drain().collect();
         assert_eq!(map.len(), 0);
         assert_eq!(map.capacity(), cap);
         assert_eq!(other_map.len(), 100);
-        let mut map: CycleMap<u64, String> = (0..100).map(|i| (i,i.to_string())).collect();
+        let mut map: CycleMap<u64, String> = (0..100).map(|i| (i, i.to_string())).collect();
         let other_map: CycleMap<u64, String> = map.drain_filter(|l, _| l % 2 == 0).collect();
         assert_eq!(map.len(), 50);
         assert_eq!(other_map.len(), 50);
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(map.clone(), construct_default_map());
         assert_eq!(construct_default_map(), construct_default_map());
     }
-    
+
     #[test]
     fn shrink_tests() {
         let mut map: CycleMap<i32, i32> = CycleMap::with_capacity(100);
@@ -316,7 +316,7 @@ mod tests {
         assert!(map.capacity() >= 2);
         assert!(map.capacity() <= 10);
     }
-    
+
     #[test]
     fn reserve_tests() {
         let mut map: CycleMap<&str, i32> = CycleMap::new();

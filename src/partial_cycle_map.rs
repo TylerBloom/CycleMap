@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     default::Default,
     fmt,
     hash::{BuildHasher, Hash},
@@ -27,9 +28,9 @@ pub(crate) struct MappingPair<T> {
     pub(crate) id: u64,
 }
 
-pub(crate) fn equivalent_key<Q: PartialEq + ?Sized>(
+pub(crate) fn equivalent_key<K, Q: PartialEq<K> + ?Sized>(
     k: &Q,
-) -> impl Fn(&MappingPair<Q>) -> bool + '_ {
+) -> impl Fn(&MappingPair<K>) -> bool + '_ {
     move |x| k.eq(&x.value)
 }
 
@@ -46,10 +47,10 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 }
 
 /// A map similar to [`CycleMap`] but items in either set can unpaired.
-/// 
+///
 /// `PartialCycleMap` takes loosens the pairing requirement of a `CycleMap`, but the other
 /// requirements (namely that values must implement [`Eq`] and [`Hash`]) remain.
-/// 
+///
 /// The enum [`OptionalPair`] is used extensively throughout the `PartialCycleMap` since full pairs
 /// often can't be be guaranteed. `OptionalPair` helps to express this by giving a more ergonomic
 /// feel to its equivalent representation, `(Option<A>, Option<B>)` or `Option<(Option<A>,
@@ -64,7 +65,7 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// use cycle_map::{PartialCycleMap, OptionalPair};
 /// use OptionalPair::*;
 ///
-/// let values: Vec<OptionalPair<&str, u64>> = 
+/// let values: Vec<OptionalPair<&str, u64>> =
 ///              vec![ SomeBoth("zero", 0), SomeBoth("one", 1), SomeBoth("two", 2),
 ///                    SomeBoth("three", 3), SomeBoth("four", 4), SomeBoth("five", 5),
 ///                    SomeLeft("six"), SomeLeft("seven"), SomeLeft("eight"),
@@ -92,7 +93,7 @@ pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPai
 /// assert_eq!(converter.remove_right(&4), Some(4));
 /// assert!(converter.unpair(&"three", &3));
 /// assert!(!converter.are_paired(&"three", &3));
-/// 
+///
 /// // Bring items together!
 /// assert!(converter.pair(&"three", &3));
 /// assert!(converter.are_paired(&"three", &3));
@@ -530,7 +531,7 @@ where
             _ => Neither,
         }
     }
-    
+
     /// Unpairs two existing items in the map. Returns `true` if they were successfully unpaired.
     /// Returns `false` if either item can not be found or if they aren't paired.
     ///
@@ -559,7 +560,7 @@ where
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => match (left.hash, right.hash) {
                 (Some(l_h), Some(r_h)) => {
-                    if l_hash  == r_h && r_hash == l_h {
+                    if l_hash == r_h && r_hash == l_h {
                         left.hash = None;
                         right.hash = None;
                         right.id = self.counter;
@@ -1146,8 +1147,12 @@ where
     /// assert_eq!(map.get_left(&"2"), None);
     /// assert_eq!(map.get_left(&"3"), None);
     /// ```
-    pub fn get_left(&self, item: &R) -> Option<&L> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
+    pub fn get_left<Q>(&self, item: &Q) -> Option<&L>
+    where
+        R: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<R>,
+    {
+        let r_hash = make_hash::<_, S>(&self.hash_builder, item);
         let right_pairing: &MappingPair<R> = self.get_right_inner_with_hash(item, r_hash)?;
         let hash = right_pairing.hash?;
         match self
@@ -1171,8 +1176,12 @@ where
     /// assert_eq!(map.get_right(&2), None);
     /// assert_eq!(map.get_right(&3), None);
     /// ```
-    pub fn get_right(&self, item: &L) -> Option<&R> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+    pub fn get_right<Q>(&self, item: &Q) -> Option<&R>
+    where
+        L: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<L>,
+    {
+        let l_hash = make_hash::<_, S>(&self.hash_builder, item);
         let left_pairing: &MappingPair<L> = self.get_left_inner_with_hash(item, l_hash)?;
         let hash = left_pairing.hash?;
         match self
@@ -1198,7 +1207,11 @@ where
     }
 
     #[inline]
-    fn get_left_inner_with_hash(&self, item: &L, hash: u64) -> Option<&MappingPair<L>> {
+    fn get_left_inner_with_hash<Q>(&self, item: &Q, hash: u64) -> Option<&MappingPair<L>>
+    where
+        L: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<L>,
+    {
         self.left_set.get(hash, equivalent_key(item))
     }
 
@@ -1209,7 +1222,11 @@ where
     }
 
     #[inline]
-    fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&MappingPair<R>> {
+    fn get_right_inner_with_hash<Q>(&self, item: &Q, hash: u64) -> Option<&MappingPair<R>>
+    where
+        R: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<R>,
+    {
         self.right_set.get(hash, equivalent_key(item))
     }
 
@@ -2079,7 +2096,7 @@ where
     type Item = (&'a L, &'a R);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(l_pairing) = self.left_iter.next() {
+        for l_pairing in self.left_iter.by_ref() {
             // Ignore all unpaired items
             let l = unsafe { l_pairing.as_ref() };
             if l.hash.is_none() {
@@ -2156,7 +2173,7 @@ where
     type Item = OptionalPair<&'a L, &'a R>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(l_pairing) = self.left_iter.next() {
+        for l_pairing in self.left_iter.by_ref() {
             let l = unsafe { l_pairing.as_ref() };
             // Ignore all paired items
             if l.hash.is_some() {
@@ -2164,7 +2181,7 @@ where
             }
             return Some(SomeLeft(&l.value));
         }
-        while let Some(r_pairing) = self.right_iter.next() {
+        for r_pairing in self.right_iter.by_ref() {
             let r = unsafe { r_pairing.as_ref() };
             // Ignore all paired items
             if r.hash.is_some() {
@@ -2308,10 +2325,11 @@ where
                 }
                 None => Some(SomeLeft(left.extract())),
             },
-            None => match self.right_ref.drain().next() {
-                Some(right) => Some(SomeRight(right.extract())),
-                None => None,
-            },
+            None => self
+                .right_ref
+                .drain()
+                .next()
+                .map(|right| SomeRight(right.extract())),
         }
     }
 
@@ -2399,7 +2417,7 @@ impl<L: Eq, R: Eq> DrainFilterInner<'_, L, R> {
     where
         F: FnMut(OptionalPair<&L, &R>) -> bool,
     {
-        while let Some(left) = self.left_iter.next() {
+        for left in self.left_iter.by_ref() {
             let l_pairing = unsafe { left.as_ref() };
             match l_pairing.hash {
                 Some(hash) => {
@@ -2422,7 +2440,7 @@ impl<L: Eq, R: Eq> DrainFilterInner<'_, L, R> {
             self.right_iter = unsafe { self.right_ref.iter() };
             self.reset_right_iter = false;
         }
-        while let Some(right) = self.right_iter.next() {
+        for right in self.right_iter.by_ref() {
             let r_pairing = unsafe { right.as_ref() };
             if f(SomeRight(&r_pairing.value)) {
                 let r = unsafe { self.right_ref.remove(right).extract() };

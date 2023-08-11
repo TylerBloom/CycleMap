@@ -1,4 +1,5 @@
 use std::{
+    borrow::Borrow,
     default::Default,
     fmt,
     hash::{BuildHasher, Hash},
@@ -19,10 +20,16 @@ use crate::utils::*;
 #[cfg(doc)]
 use hashbrown::HashMap;
 
-pub(crate) fn equivalent_key<T: PartialEq<Q>, Q: PartialEq + ?Sized>(
+pub(crate) fn equivalent_key_left<T: Borrow<Q>, Q: PartialEq + ?Sized>(
     k: &Q,
-) -> impl Fn(&T) -> bool + '_ {
-    move |x| x.eq(k)
+) -> impl Fn(&LeftItem<T>) -> bool + '_ {
+    move |x| x.value.borrow().eq(k)
+}
+
+pub(crate) fn equivalent_key_right<T: Borrow<Q>, Q: PartialEq + ?Sized>(
+    k: &Q,
+) -> impl Fn(&RightItem<T>) -> bool + '_ {
+    move |x| x.value.borrow().eq(k)
 }
 
 pub(crate) fn left_with_left_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&LeftItem<T>) -> bool {
@@ -35,15 +42,13 @@ pub(crate) fn left_with_right_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&Left
 }
 */
 
-pub(crate) fn right_with_left_pair<'a, T: PartialEq + ?Sized>(
-    pair: &'a (u64, ID),
-) -> impl Fn(&RightItem<T>) -> bool + 'a {
+pub(crate) fn right_with_left_pair<T: PartialEq + ?Sized>(
+    pair: &(u64, ID),
+) -> impl Fn(&RightItem<T>) -> bool + '_ {
     move |x| x.pairs.contains(pair)
 }
 
-pub(crate) fn right_with_right_id<'a, T: PartialEq + ?Sized>(
-    id: ID,
-) -> impl Fn(&RightItem<T>) -> bool + 'a {
+pub(crate) fn right_with_right_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&RightItem<T>) -> bool {
     move |x| x.id == id
 }
 
@@ -226,8 +231,8 @@ where
     pub fn insert(&mut self, left: L, right: R) {
         let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, &right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(&left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(&right));
+        let opt_left = self.left_set.get_mut(l_hash, equivalent_key_left(&left));
+        let opt_right = self.right_set.get_mut(r_hash, equivalent_key_right(&right));
         match (opt_left, opt_right) {
             (None, None) => {
                 let left_item = LeftItem {
@@ -284,7 +289,7 @@ where
             }
             (Some(l), Some(r)) => {
                 let pair = (l_hash, l.id);
-                r.pairs.insert(pair.clone());
+                r.pairs.insert(pair);
                 let new_r_id = r.id;
                 self.right_set
                     .get_mut(l.hash, right_with_right_id(l.r_id))
@@ -379,7 +384,9 @@ where
     /// ```
     pub fn insert_left(&mut self, left: L, right: &R) -> Option<L> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let right_item = self.right_set.get_mut(r_hash, equivalent_key(right))?;
+        let right_item = self
+            .right_set
+            .get_mut(r_hash, equivalent_key_right(right))?;
         let right_id = right_item.id;
         let l_hash = make_hash::<L, S>(&self.hash_builder, &left);
         right_item.pairs.insert((l_hash, self.left_counter));
@@ -464,7 +471,7 @@ where
     /// [`swap_right_remove`]: #method.swap_right_remove
     pub fn swap_right(&mut self, old: &R, new: R) {
         let old_hash = make_hash::<R, S>(&self.hash_builder, old);
-        match self.right_set.get_mut(old_hash, equivalent_key(old)) {
+        match self.right_set.get_mut(old_hash, equivalent_key_right(old)) {
             None => {
                 self.insert_right(new);
             }
@@ -507,7 +514,10 @@ where
     /// ```
     pub fn swap_right_remove(&mut self, old: &R, new: R) -> Option<R> {
         let old_hash = make_hash::<R, S>(&self.hash_builder, old);
-        match self.right_set.remove_entry(old_hash, equivalent_key(old)) {
+        match self
+            .right_set
+            .remove_entry(old_hash, equivalent_key_right(old))
+        {
             None => {
                 self.insert_right(new);
                 None
@@ -552,8 +562,8 @@ where
     pub fn pair(&mut self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
+        let opt_left = self.left_set.get_mut(l_hash, equivalent_key_left(left));
+        let opt_right = self.right_set.get(r_hash, equivalent_key_right(right));
         let (digest, to_remove) = match (opt_left, opt_right) {
             (Some(left), Some(r)) => {
                 let to_remove = Some((left.hash, left.r_id, left.id));
@@ -573,7 +583,7 @@ where
             old_right.pairs.remove(&(l_hash, triple.2));
             let new_right = self
                 .right_set
-                .get_mut(r_hash, equivalent_key(right))
+                .get_mut(r_hash, equivalent_key_right(right))
                 .unwrap();
             new_right.pairs.insert((l_hash, triple.2));
         }
@@ -594,7 +604,7 @@ where
     /// ```
     pub fn is_right_paired(&self, right: &R) -> bool {
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
+        let opt_right = self.right_set.get(r_hash, equivalent_key_right(right));
         match opt_right {
             Some(r) => !r.pairs.is_empty(),
             None => false,
@@ -615,8 +625,8 @@ where
     pub fn are_paired(&self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_left = self.left_set.get(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
+        let opt_left = self.left_set.get(l_hash, equivalent_key_left(left));
+        let opt_right = self.right_set.get(r_hash, equivalent_key_right(right));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => {
                 left.hash == r_hash && right.pairs.contains(&(l_hash, left.id))
@@ -638,7 +648,7 @@ where
     /// ```
     pub fn contains_left(&self, left: &L) -> bool {
         let hash = make_hash::<L, S>(&self.hash_builder, left);
-        self.left_set.get(hash, equivalent_key(left)).is_some()
+        self.left_set.get(hash, equivalent_key_left(left)).is_some()
     }
 
     /// Returns `true` if the item is found and `false` otherwise.
@@ -656,7 +666,9 @@ where
     /// ```
     pub fn contains_right(&self, right: &R) -> bool {
         let hash = make_hash::<R, S>(&self.hash_builder, right);
-        self.right_set.get(hash, equivalent_key(right)).is_some()
+        self.right_set
+            .get(hash, equivalent_key_right(right))
+            .is_some()
     }
 
     /// Removes a pair of items only if they are paired together. The right item and every item it
@@ -693,7 +705,9 @@ where
     /// ```
     pub fn remove_left(&mut self, item: &L) -> Option<L> {
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
-        let left_item = self.left_set.remove_entry(l_hash, equivalent_key(item))?;
+        let left_item = self
+            .left_set
+            .remove_entry(l_hash, equivalent_key_left(item))?;
         let pair = (l_hash, left_item.id);
         self.right_set
             .get_mut(left_item.hash, right_with_left_pair(&pair))
@@ -720,7 +734,9 @@ where
     /// ```
     pub fn remove_right(&mut self, item: &R) -> Option<(HashSet<L>, R)> {
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
-        let right_item = self.right_set.remove_entry(r_hash, equivalent_key(item))?;
+        let right_item = self
+            .right_set
+            .remove_entry(r_hash, equivalent_key_right(item))?;
         let left_vec: HashSet<L> = right_item
             .pairs
             .iter()
@@ -768,9 +784,13 @@ where
     /// assert!(*val == 1 || *val == 2);
     /// assert!(iter.next().is_none());
     /// ```
-    pub fn get_left_iter(&self, item: &R) -> Option<PairIter<'_, L, R, S>> {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item);
-        let right_item: &RightItem<R> = self.right_set.get(r_hash, equivalent_key(item))?;
+    pub fn get_left_iter<Q>(&self, item: &Q) -> Option<PairIter<'_, L, R, S>>
+    where
+        R: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let r_hash = make_hash::<_, S>(&self.hash_builder, item);
+        let right_item: &RightItem<R> = self.right_set.get(r_hash, equivalent_key_right(item))?;
         Some(PairIter {
             iter: right_item.pairs.iter(),
             map_ref: self,
@@ -789,8 +809,12 @@ where
     /// assert_eq!(map.get_right(&1), Some(&"1"));
     /// assert_eq!(map.get_right(&2), None);
     /// ```
-    pub fn get_right(&self, item: &L) -> Option<&R> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+    pub fn get_right<Q>(&self, item: &Q) -> Option<&R>
+    where
+        L: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let l_hash = make_hash::<_, S>(&self.hash_builder, item);
         let left_item = self.get_left_inner_with_hash(item, l_hash)?;
         match self
             .right_set
@@ -802,13 +826,21 @@ where
     }
 
     #[inline]
-    fn get_left_inner_with_hash(&self, item: &L, hash: u64) -> Option<&LeftItem<L>> {
-        self.left_set.get(hash, equivalent_key(item))
+    fn get_left_inner_with_hash<Q>(&self, item: &Q, hash: u64) -> Option<&LeftItem<L>>
+    where
+        L: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.left_set.get(hash, equivalent_key_left(item))
     }
 
     #[inline]
-    fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&RightItem<R>> {
-        self.right_set.get(hash, equivalent_key(item))
+    fn get_right_inner_with_hash<Q>(&self, item: &Q, hash: u64) -> Option<&RightItem<R>>
+    where
+        R: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.right_set.get(hash, equivalent_key_right(item))
     }
 
     /// Returns an iterator that visits all the items in the map in an arbitary order.
@@ -1411,7 +1443,7 @@ where
                     .right_set
                     .get(l_item.hash, right_with_right_id(l_item.r_id))
                     .unwrap();
-                return Some((&l_item.value, &r_item.value));
+                Some((&l_item.value, &r_item.value))
             }
             None => None,
         }
@@ -1671,13 +1703,7 @@ impl<T: PartialEq> PartialEq for LeftItem<T> {
     }
 }
 
-impl<T: PartialEq> PartialEq<T> for LeftItem<T> {
-    fn eq(&self, other: &T) -> bool {
-        self.value.eq(other)
-    }
-}
-
-impl<T: Eq> Eq for LeftItem<T> {}
+impl<T> Eq for LeftItem<T> where T: Hash + Eq {}
 
 impl<T: Clone> Clone for LeftItem<T> {
     fn clone(&self) -> Self {
@@ -1716,12 +1742,6 @@ impl<T: Hash> Hash for RightItem<T> {
 impl<T: PartialEq> PartialEq for RightItem<T> {
     fn eq(&self, other: &Self) -> bool {
         self.id.eq(&other.id) && self.value.eq(&other.value)
-    }
-}
-
-impl<T: PartialEq> PartialEq<T> for RightItem<T> {
-    fn eq(&self, other: &T) -> bool {
-        self.value.eq(other)
     }
 }
 

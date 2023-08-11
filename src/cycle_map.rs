@@ -27,9 +27,9 @@ pub(crate) struct MappingPair<T> {
     pub(crate) id: u64,
 }
 
-pub(crate) fn equivalent_key<Q: PartialEq + ?Sized>(
+pub(crate) fn equivalent_key<Q: PartialEq<K> + ?Sized, K>(
     k: &Q,
-) -> impl Fn(&MappingPair<Q>) -> bool + '_ {
+) -> impl Fn(&MappingPair<K>) -> bool + '_ {
     move |x| k.eq(&x.value)
 }
 
@@ -647,11 +647,11 @@ where
     /// ```
     pub fn get_left<Q>(&self, item: &Q) -> Option<&L>
     where
-        Q: Borrow<R>,
+        R: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<R>,
     {
-        let r_hash = make_hash::<R, S>(&self.hash_builder, item.borrow());
-        let right_pairing: &MappingPair<R> =
-            self.get_right_inner_with_hash(item.borrow(), r_hash)?;
+        let r_hash = make_hash::<_, S>(&self.hash_builder, item);
+        let right_pairing: &MappingPair<R> = self.get_right_inner_with_hash(item, r_hash)?;
         match self
             .left_set
             .get(right_pairing.hash, hash_and_id(r_hash, right_pairing.id))
@@ -671,8 +671,12 @@ where
     /// assert_eq!(map.get_right(&1), Some(&"1"));
     /// assert_eq!(map.get_right(&2), None);
     /// ```
-    pub fn get_right(&self, item: &L) -> Option<&R> {
-        let l_hash = make_hash::<L, S>(&self.hash_builder, item);
+    pub fn get_right<Q>(&self, item: &Q) -> Option<&R>
+    where
+        L: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<L>,
+    {
+        let l_hash = make_hash::<_, S>(&self.hash_builder, item);
         let left_pairing: &MappingPair<L> = self.get_left_inner_with_hash(item, l_hash)?;
         match self
             .right_set
@@ -699,12 +703,20 @@ where
     }
 
     #[inline]
-    fn get_left_inner_with_hash(&self, item: &L, hash: u64) -> Option<&MappingPair<L>> {
+    fn get_left_inner_with_hash<Q>(&self, item: &Q, hash: u64) -> Option<&MappingPair<L>>
+    where
+        L: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<L>,
+    {
         self.left_set.get(hash, equivalent_key(item))
     }
 
     #[inline]
-    fn get_right_inner_with_hash(&self, item: &R, hash: u64) -> Option<&MappingPair<R>> {
+    fn get_right_inner_with_hash<Q>(&self, item: &Q, hash: u64) -> Option<&MappingPair<R>>
+    where
+        R: Borrow<Q>,
+        Q: Hash + Eq + PartialEq<R>,
+    {
         self.right_set.get(hash, equivalent_key(item))
     }
 
@@ -1406,7 +1418,7 @@ impl<L, R: Eq> DrainFilterInner<'_, L, R> {
         F: FnMut(&L, &R) -> bool,
     {
         unsafe {
-            while let Some(left) = self.left_iter.next() {
+            for left in self.left_iter.by_ref() {
                 let l_pairing = left.as_ref();
                 let right = self
                     .right_ref

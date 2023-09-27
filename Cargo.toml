@@ -1,6 +1,6 @@
 [package]
 name = "cycle_map"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 
 authors = ["Tyler Bloom <tylerbloom2222@gmail.com>"]
@@ -15,7 +15,6 @@ categories = ["data-structures"]
 
 
 [dependencies]
-#ahash_ = { version = "0.7.0", default-features = false, optional = true, package = "ahash" }
 hashbrown = { version = "0.12.0", default-features = false, features = ["raw", "ahash"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
 

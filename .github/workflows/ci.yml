@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ main ]
 
-env: 
+env:
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -25,7 +25,7 @@ jobs:
       - run: cargo build --all-features --verbose
       - run: cargo test --all-features --verbose
       - run: cargo doc --all-features --verbose
-    
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -38,7 +38,7 @@ jobs:
 
       - name: Generate code coverage
         run: |
-          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
+          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v2

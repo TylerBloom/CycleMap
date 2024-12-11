@@ -91,7 +91,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::CycleMap;
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Hash, Debug)]
     struct TestingStruct {

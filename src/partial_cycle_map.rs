@@ -4,16 +4,11 @@ use std::{
     fmt,
     hash::{BuildHasher, Hash},
     iter::FusedIterator,
-    marker::PhantomData,
 };
 
 use core::mem;
 
-use hashbrown::{
-    hash_map::DefaultHashBuilder,
-    raw::{RawDrain, RawIter, RawTable},
-    TryReserveError,
-};
+use hashbrown::{hash_table, DefaultHashBuilder, HashTable, TryReserveError};
 
 use crate::{optionals::*, utils::*};
 use OptionalPair::*;
@@ -96,8 +91,8 @@ pub(crate) fn just_id<Q: PartialEq>(id: u64) -> impl Fn(&MappingPair<Q>) -> bool
 pub struct PartialCycleMap<L, R, St = DefaultHashBuilder> {
     pub(crate) hash_builder: St,
     pub(crate) counter: u64,
-    left_set: RawTable<MappingPair<L>>,
-    right_set: RawTable<MappingPair<R>>,
+    left_set: HashTable<MappingPair<L>>,
+    right_set: HashTable<MappingPair<R>>,
 }
 
 impl<L, R> PartialCycleMap<L, R, DefaultHashBuilder> {
@@ -176,12 +171,12 @@ where
             id: self.counter,
         };
         self.counter += 1;
-        self.left_set.insert(
+        self.left_set.insert_unique(
             l_hash,
             left_pairing,
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
         );
-        self.right_set.insert(
+        self.right_set.insert_unique(
             r_hash,
             right_pairing,
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
@@ -229,7 +224,7 @@ where
             id: self.counter,
         };
         self.counter += 1;
-        self.left_set.insert(
+        self.left_set.insert_unique(
             l_hash,
             left_pairing,
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
@@ -276,7 +271,7 @@ where
             id: self.counter,
         };
         self.counter += 1;
-        self.right_set.insert(
+        self.right_set.insert_unique(
             r_hash,
             right_pairing,
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
@@ -312,8 +307,8 @@ where
     pub fn pair(&mut self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
+        let opt_left = self.left_set.find_mut(l_hash, equivalent_key(left));
+        let opt_right = self.right_set.find_mut(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => match (left.hash, right.hash) {
                 (None, None) => {
@@ -363,8 +358,8 @@ where
         }
         let l_hash = make_hash::<L, S>(&self.hash_builder, l);
         let r_hash = make_hash::<R, S>(&self.hash_builder, r);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
+        let opt_left = self.left_set.find_mut(l_hash, equivalent_key(l));
+        let opt_right = self.right_set.find_mut(r_hash, equivalent_key(r));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => match (left.hash, right.hash) {
                 (None, None) => {
@@ -380,10 +375,10 @@ where
                     // Here, we give the left item the new id to avoid a collision in the right set
                     left.id = right.id;
                     self.right_set
-                        .get_mut(lp_hash, hash_and_id(l_hash, old_id))
+                        .find_mut(lp_hash, hash_and_id(l_hash, old_id))
                         .unwrap()
                         .hash = None;
-                    SomeRight(&self.right_set.get(lp_hash, just_id(old_id)).unwrap().value)
+                    SomeRight(&self.right_set.find(lp_hash, just_id(old_id)).unwrap().value)
                 }
                 (None, Some(rp_hash)) => {
                     left.hash = Some(r_hash);
@@ -392,10 +387,10 @@ where
                     // Here, we give the right item the new id to avoid a collision in the left set
                     right.id = left.id;
                     self.left_set
-                        .get_mut(rp_hash, hash_and_id(r_hash, old_id))
+                        .find_mut(rp_hash, hash_and_id(r_hash, old_id))
                         .unwrap()
                         .hash = None;
-                    SomeLeft(&self.left_set.get(rp_hash, just_id(old_id)).unwrap().value)
+                    SomeLeft(&self.left_set.find(rp_hash, just_id(old_id)).unwrap().value)
                 }
                 (Some(lp_hash), Some(rp_hash)) => {
                     left.hash = Some(r_hash);
@@ -407,18 +402,22 @@ where
                     right.id = self.counter;
                     self.counter += 1;
                     self.left_set
-                        .get_mut(rp_hash, hash_and_id(r_hash, old_r_id))
+                        .find_mut(rp_hash, hash_and_id(r_hash, old_r_id))
                         .unwrap()
                         .hash = None;
                     self.right_set
-                        .get_mut(lp_hash, hash_and_id(l_hash, old_l_id))
+                        .find_mut(lp_hash, hash_and_id(l_hash, old_l_id))
                         .unwrap()
                         .hash = None;
                     SomeBoth(
-                        &self.left_set.get(rp_hash, just_id(old_r_id)).unwrap().value,
+                        &self
+                            .left_set
+                            .find(rp_hash, just_id(old_r_id))
+                            .unwrap()
+                            .value,
                         &self
                             .right_set
-                            .get(lp_hash, just_id(old_l_id))
+                            .find(lp_hash, just_id(old_l_id))
                             .unwrap()
                             .value,
                     )
@@ -464,8 +463,8 @@ where
         }
         let l_hash = make_hash::<L, S>(&self.hash_builder, l);
         let r_hash = make_hash::<R, S>(&self.hash_builder, r);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(l));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(r));
+        let opt_left = self.left_set.find_mut(l_hash, equivalent_key(l));
+        let opt_right = self.right_set.find_mut(r_hash, equivalent_key(r));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => {
                 match (left.hash, right.hash) {
@@ -550,8 +549,8 @@ where
     pub fn unpair(&mut self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_left = self.left_set.get_mut(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get_mut(r_hash, equivalent_key(right));
+        let opt_left = self.left_set.find_mut(l_hash, equivalent_key(left));
+        let opt_right = self.right_set.find_mut(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => match (left.hash, right.hash) {
                 (Some(l_h), Some(r_h)) => {
@@ -576,7 +575,7 @@ where
     /// Returns false if the item isn't found or is unpaired. Returns true otherwise.
     pub fn is_left_paired(&self, left: &L) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
-        let opt_left = self.left_set.get(l_hash, equivalent_key(left));
+        let opt_left = self.left_set.find(l_hash, equivalent_key(left));
         match opt_left {
             Some(l) => l.hash.is_some(),
             None => false,
@@ -588,7 +587,7 @@ where
     /// Returns false if the item isn't found or is unpaired. Returns true otherwise.
     pub fn is_right_paired(&self, right: &R) -> bool {
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
+        let opt_right = self.right_set.find(r_hash, equivalent_key(right));
         match opt_right {
             Some(r) => r.hash.is_some(),
             None => false,
@@ -611,8 +610,8 @@ where
     pub fn are_paired(&self, left: &L, right: &R) -> bool {
         let l_hash = make_hash::<L, S>(&self.hash_builder, left);
         let r_hash = make_hash::<R, S>(&self.hash_builder, right);
-        let opt_left = self.left_set.get(l_hash, equivalent_key(left));
-        let opt_right = self.right_set.get(r_hash, equivalent_key(right));
+        let opt_left = self.left_set.find(l_hash, equivalent_key(left));
+        let opt_right = self.right_set.find(r_hash, equivalent_key(right));
         match (opt_left, opt_right) {
             (Some(left), Some(right)) => {
                 left.id == right.id && Some(l_hash) == right.hash && Some(r_hash) == left.hash
@@ -636,7 +635,7 @@ where
     /// ```
     pub fn contains_left(&self, left: &L) -> bool {
         let hash = make_hash::<L, S>(&self.hash_builder, left);
-        self.left_set.get(hash, equivalent_key(left)).is_some()
+        self.left_set.find(hash, equivalent_key(left)).is_some()
     }
 
     /// Returns `true` if the item is found and `false` otherwise.
@@ -654,7 +653,7 @@ where
     /// ```
     pub fn contains_right(&self, right: &R) -> bool {
         let hash = make_hash::<R, S>(&self.hash_builder, right);
-        self.right_set.get(hash, equivalent_key(right)).is_some()
+        self.right_set.find(hash, equivalent_key(right)).is_some()
     }
 
     /// Removes and returns the give pair from the map provided that they are paired together.
@@ -694,7 +693,10 @@ where
         let l_hash = make_hash::<L, S>(&self.hash_builder, item);
         let item = self.left_set.remove_entry(l_hash, equivalent_key(item))?;
         if let Some(hash) = item.hash {
-            self.right_set.get_mut(hash, just_id(item.id)).unwrap().hash = None;
+            self.right_set
+                .find_mut(hash, just_id(item.id))
+                .unwrap()
+                .hash = None;
         }
         Some(item.extract())
     }
@@ -753,7 +755,7 @@ where
         let r_hash = make_hash::<R, S>(&self.hash_builder, item);
         let item = self.right_set.remove_entry(r_hash, equivalent_key(item))?;
         if let Some(hash) = item.hash {
-            self.left_set.get_mut(hash, just_id(item.id)).unwrap().hash = None;
+            self.left_set.find_mut(hash, just_id(item.id)).unwrap().hash = None;
         }
         Some(item.extract())
     }
@@ -845,7 +847,7 @@ where
         let eq_opt = self.swap_left_eq_check(old, &new, new_l_hash);
         // Find the old left pairing
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        let l_pairing: &MappingPair<L> = match self.left_set.get(old_l_hash, equivalent_key(old)) {
+        let l_pairing: &MappingPair<L> = match self.left_set.find(old_l_hash, equivalent_key(old)) {
             Some(p) => p,
             None => {
                 return Neither;
@@ -855,7 +857,7 @@ where
             // Use old left pairing to find right pairing
             let r_pairing: &mut MappingPair<R> = self
                 .right_set
-                .get_mut(hash, hash_and_id(old_l_hash, l_pairing.id))
+                .find_mut(hash, hash_and_id(old_l_hash, l_pairing.id))
                 .unwrap();
             // Updated right pairing
             r_pairing.hash = Some(new_l_hash);
@@ -873,7 +875,7 @@ where
             .unwrap()
             .extract();
         // Insert new left pairing
-        self.left_set.insert(
+        self.left_set.insert_unique(
             new_l_hash,
             new_left_pairing,
             make_hasher::<MappingPair<L>, S>(&self.hash_builder),
@@ -944,7 +946,11 @@ where
         to_insert: R,
     ) -> OptionalPair<L, OptionalPair<L, R>> {
         let old_l_hash = make_hash::<L, S>(&self.hash_builder, old);
-        if self.left_set.get(old_l_hash, equivalent_key(old)).is_some() {
+        if self
+            .left_set
+            .find(old_l_hash, equivalent_key(old))
+            .is_some()
+        {
             self.swap_left(old, new)
         } else {
             // TODO: Do further verification on this. All cases _should_ be covered here
@@ -960,7 +966,7 @@ where
 
     /// Pair of the collision checks done in the swap left methods
     fn swap_left_eq_check(&mut self, old: &L, new: &L, new_hash: u64) -> OptionalPair<L, R> {
-        let opt = self.left_set.get(new_hash, equivalent_key(new));
+        let opt = self.left_set.find(new_hash, equivalent_key(new));
         if opt.is_some() && new != old {
             // Remove the problem cycle
             self.remove_via_left(new)
@@ -1000,7 +1006,8 @@ where
         let eq_opt = self.swap_right_eq_check(old, &new, new_r_hash);
         // Find the old right pairing
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
-        let r_pairing: &MappingPair<R> = match self.right_set.get(old_r_hash, equivalent_key(old)) {
+        let r_pairing: &MappingPair<R> = match self.right_set.find(old_r_hash, equivalent_key(old))
+        {
             Some(p) => p,
             None => {
                 return Neither;
@@ -1010,7 +1017,7 @@ where
             // Use old right pairing to find the left pairing
             let l_pairing: &mut MappingPair<L> = self
                 .left_set
-                .get_mut(hash, hash_and_id(old_r_hash, r_pairing.id))
+                .find_mut(hash, hash_and_id(old_r_hash, r_pairing.id))
                 .unwrap();
             // Updated left pairing
             l_pairing.hash = Some(new_r_hash);
@@ -1028,7 +1035,7 @@ where
             .unwrap()
             .extract();
         // Insert new right pairing
-        self.right_set.insert(
+        self.right_set.insert_unique(
             new_r_hash,
             new_right_pairing,
             make_hasher::<MappingPair<R>, S>(&self.hash_builder),
@@ -1102,7 +1109,7 @@ where
         let old_r_hash = make_hash::<R, S>(&self.hash_builder, old);
         if self
             .right_set
-            .get(old_r_hash, equivalent_key(old))
+            .find(old_r_hash, equivalent_key(old))
             .is_some()
         {
             self.swap_right(old, new)
@@ -1120,7 +1127,7 @@ where
 
     /// Pair of the collision checks done in the swap left methods
     fn swap_right_eq_check(&mut self, old: &R, new: &R, new_hash: u64) -> OptionalPair<L, R> {
-        let opt = self.right_set.get(new_hash, equivalent_key(new));
+        let opt = self.right_set.find(new_hash, equivalent_key(new));
         if opt.is_some() && new != old {
             // Remove the problem cycle
             self.remove_via_right(new)
@@ -1152,7 +1159,7 @@ where
         let hash = right_pairing.hash?;
         match self
             .left_set
-            .get(hash, hash_and_id(r_hash, right_pairing.id))
+            .find(hash, hash_and_id(r_hash, right_pairing.id))
         {
             None => None,
             Some(pairing) => Some(&pairing.value),
@@ -1181,7 +1188,7 @@ where
         let hash = left_pairing.hash?;
         match self
             .right_set
-            .get(hash, hash_and_id(l_hash, left_pairing.id))
+            .find(hash, hash_and_id(l_hash, left_pairing.id))
         {
             None => None,
             Some(pairing) => Some(&pairing.value),
@@ -1190,15 +1197,15 @@ where
 
     /// Removes a pair using the hash of the left item, right item, and their shared pairing id
     fn get_via_hashes_and_id(&self, l_hash: u64, r_hash: u64, id: u64) -> Option<(&L, &R)> {
-        let left_pairing = self.left_set.get(l_hash, hash_and_id(r_hash, id))?;
-        let right_pairing = self.right_set.get(r_hash, hash_and_id(l_hash, id)).unwrap();
+        let left_pairing = self.left_set.find(l_hash, hash_and_id(r_hash, id))?;
+        let right_pairing = self.right_set.find(r_hash, hash_and_id(l_hash, id)).unwrap();
         Some((&left_pairing.value, &right_pairing.value))
     }
 
     #[inline]
     fn get_left_inner(&self, item: &L) -> Option<&MappingPair<L>> {
         let hash = make_hash::<L, S>(&self.hash_builder, item);
-        self.left_set.get(hash, equivalent_key(item))
+        self.left_set.find(hash, equivalent_key(item))
     }
 
     #[inline]
@@ -1207,13 +1214,13 @@ where
         L: Borrow<Q>,
         Q: Hash + Eq + PartialEq<L>,
     {
-        self.left_set.get(hash, equivalent_key(item))
+        self.left_set.find(hash, equivalent_key(item))
     }
 
     #[inline]
     fn get_right_inner(&self, item: &R) -> Option<&MappingPair<R>> {
         let hash = make_hash::<R, S>(&self.hash_builder, item);
-        self.right_set.get(hash, equivalent_key(item))
+        self.right_set.find(hash, equivalent_key(item))
     }
 
     #[inline]
@@ -1222,7 +1229,7 @@ where
         R: Borrow<Q>,
         Q: Hash + Eq + PartialEq<R>,
     {
-        self.right_set.get(hash, equivalent_key(item))
+        self.right_set.find(hash, equivalent_key(item))
     }
 
     /// Returns an iterator over the items in the map
@@ -1247,7 +1254,7 @@ where
     /// ```
     pub fn iter(&self) -> Iter<'_, L, R, S> {
         Iter {
-            left_iter: unsafe { self.left_set.iter() },
+            left_iter: self.left_set.iter(),
             map_ref: self,
         }
     }
@@ -1266,8 +1273,8 @@ where
     /// ```
     pub fn iter_paired(&self) -> PairedIter<'_, L, R, S> {
         PairedIter {
-            left_iter: unsafe { self.left_set.iter() },
-            right_iter: unsafe { self.right_set.iter() },
+            left_iter: self.left_set.iter(),
+            right_iter:self.right_set.iter(),
             map_ref: self,
         }
     }
@@ -1293,8 +1300,8 @@ where
     /// ```
     pub fn iter_unpaired(&self) -> UnpairedIter<'_, L, R, S> {
         UnpairedIter {
-            left_iter: unsafe { self.left_set.iter() },
-            right_iter: unsafe { self.right_set.iter() },
+            left_iter: self.left_set.iter(),
+            right_iter: self.right_set.iter(),
             map_ref: self,
         }
     }
@@ -1313,8 +1320,7 @@ where
     /// ```
     pub fn iter_left(&self) -> SingleIter<'_, L> {
         SingleIter {
-            iter: unsafe { self.left_set.iter() },
-            marker: PhantomData,
+            iter: self.left_set.iter(),
         }
     }
 
@@ -1332,8 +1338,7 @@ where
     /// ```
     pub fn iter_right(&self) -> SingleIter<'_, R> {
         SingleIter {
-            iter: unsafe { self.right_set.iter() },
-            marker: PhantomData,
+            iter: self.right_set.iter(),
         }
     }
 
@@ -1402,17 +1407,15 @@ where
     where
         F: FnMut(OptionalPair<&L, &R>) -> bool,
     {
-        unsafe {
-            DrainFilterIter {
-                f,
-                inner: DrainFilterInner {
-                    left_iter: self.left_set.iter(),
-                    right_iter: self.right_set.iter(),
-                    left_ref: &mut self.left_set,
-                    right_ref: &mut self.right_set,
-                    reset_right_iter: true,
-                },
-            }
+        DrainFilterIter {
+            f,
+            inner: DrainFilterInner {
+                left_iter: self.left_set.iter(),
+                right_iter: self.right_set.iter(),
+                left_ref: &mut self.left_set,
+                right_ref: &mut self.right_set,
+                reset_right_iter: true,
+            },
         }
     }
 
@@ -1789,8 +1792,8 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
         Self {
             hash_builder,
             counter: 0,
-            left_set: RawTable::new(),
-            right_set: RawTable::new(),
+            left_set: HashTable::new(),
+            right_set: HashTable::new(),
         }
     }
 
@@ -1819,8 +1822,8 @@ impl<L, R, S> PartialCycleMap<L, R, S> {
         Self {
             hash_builder,
             counter: 0,
-            left_set: RawTable::with_capacity(capacity),
-            right_set: RawTable::with_capacity(capacity),
+            left_set: HashTable::with_capacity(capacity),
+            right_set: HashTable::with_capacity(capacity),
         }
     }
 
@@ -1987,7 +1990,7 @@ where
 
 /// An iterator over the entry items of a `PartialCycleMap`.
 pub struct Iter<'a, L, R, S> {
-    left_iter: RawIter<MappingPair<L>>,
+    left_iter: hash_table::Iter<'a, MappingPair<L>>,
     map_ref: &'a PartialCycleMap<L, R, S>,
 }
 
@@ -2056,8 +2059,8 @@ where
 
 /// An iterator over the entry pairs of a `PartialCycleMap`.
 pub struct PairedIter<'a, L, R, S> {
-    left_iter: RawIter<MappingPair<L>>,
-    right_iter: RawIter<MappingPair<R>>,
+    left_iter: hash_table::Iter<'a, MappingPair<L>>,
+    right_iter: hash_table::Iter<'a, MappingPair<R>>,
     map_ref: &'a PartialCycleMap<L, R, S>,
 }
 
@@ -2133,8 +2136,8 @@ where
 
 /// An iterator over the entry pairs of a `PartialCycleMap`.
 pub struct UnpairedIter<'a, L, R, S> {
-    left_iter: RawIter<MappingPair<L>>,
-    right_iter: RawIter<MappingPair<R>>,
+    left_iter: hash_table::Iter<'a, MappingPair<L>>,
+    right_iter: hash_table::Iter<'a, MappingPair<R>>,
     map_ref: &'a PartialCycleMap<L, R, S>,
 }
 
@@ -2213,15 +2216,13 @@ where
 
 /// An iterator over the elements of an inner set of a `PartialCycleMap`.
 pub struct SingleIter<'a, T> {
-    iter: RawIter<MappingPair<T>>,
-    marker: PhantomData<&'a T>,
+    iter: hash_table::Iter<'a, MappingPair<T>>,
 }
 
 impl<T> Clone for SingleIter<'_, T> {
     fn clone(&self) -> Self {
         Self {
             iter: self.iter.clone(),
-            marker: PhantomData,
         }
     }
 }
@@ -2273,8 +2274,8 @@ where
     L: Eq + Hash,
     R: Eq + Hash,
 {
-    left_iter: RawDrain<'a, MappingPair<L>>,
-    right_ref: &'a mut RawTable<MappingPair<R>>,
+    left_iter: hash_table::Drain<'a, MappingPair<L>>,
+    right_ref: &'a mut HashTable<MappingPair<R>>,
 }
 
 impl<'a, L, R> Drop for DrainIter<'a, L, R>
@@ -2400,10 +2401,10 @@ impl<L: Eq, R: Eq, F> FusedIterator for DrainFilterIter<'_, L, R, F> where
 
 /// Portions of `DrainFilter` shared with `set::DrainFilter`
 pub(super) struct DrainFilterInner<'a, L, R> {
-    pub(super) left_iter: RawIter<MappingPair<L>>,
-    pub(super) right_iter: RawIter<MappingPair<R>>,
-    pub(super) left_ref: &'a mut RawTable<MappingPair<L>>,
-    pub(super) right_ref: &'a mut RawTable<MappingPair<R>>,
+    pub(super) left_iter: hash_table::Iter<'a, MappingPair<L>>,
+    pub(super) right_iter: hash_table::Iter<'a, MappingPair<R>>,
+    pub(super) left_ref: &'a mut HashTable<MappingPair<L>>,
+    pub(super) right_ref: &'a mut HashTable<MappingPair<R>>,
     pub(super) reset_right_iter: bool,
 }
 

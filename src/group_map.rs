@@ -20,19 +20,19 @@ use crate::utils::*;
 #[cfg(doc)]
 use hashbrown::HashMap;
 
-pub(crate) fn equivalent_key_left<T: Borrow<Q>, Q: PartialEq + ?Sized>(
+pub(crate) fn equivalent_key_left<T: Borrow<Q>, Q: PartialEq>(
     k: &Q,
-) -> impl Fn(&LeftItem<T>) -> bool + '_ {
+) -> impl '_ + Fn(&LeftItem<T>) -> bool {
     move |x| x.value.borrow().eq(k)
 }
 
-pub(crate) fn equivalent_key_right<T: Borrow<Q>, Q: PartialEq + ?Sized>(
+pub(crate) fn equivalent_key_right<T: Borrow<Q>, Q: PartialEq>(
     k: &Q,
-) -> impl Fn(&RightItem<T>) -> bool + '_ {
+) -> impl '_ + Fn(&RightItem<T>) -> bool {
     move |x| x.value.borrow().eq(k)
 }
 
-pub(crate) fn left_with_left_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&LeftItem<T>) -> bool {
+pub(crate) fn left_with_left_id<T: PartialEq>(id: ID) -> impl Fn(&LeftItem<T>) -> bool {
     move |x| x.id == id
 }
 
@@ -42,13 +42,13 @@ pub(crate) fn left_with_right_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&Left
 }
 */
 
-pub(crate) fn right_with_left_pair<T: PartialEq + ?Sized>(
+pub(crate) fn right_with_left_pair<T: PartialEq>(
     pair: &(u64, ID),
-) -> impl Fn(&RightItem<T>) -> bool + '_ {
+) -> impl '_ + Fn(&RightItem<T>) -> bool {
     move |x| x.pairs.contains(pair)
 }
 
-pub(crate) fn right_with_right_id<T: PartialEq + ?Sized>(id: ID) -> impl Fn(&RightItem<T>) -> bool {
+pub(crate) fn right_with_right_id<T: PartialEq>(id: ID) -> impl Fn(&RightItem<T>) -> bool {
     move |x| x.id == id
 }
 
@@ -1381,7 +1381,7 @@ where
     }
 }
 
-impl<'a, L, R, S> ExactSizeIterator for Iter<'a, L, R, S>
+impl<L, R, S> ExactSizeIterator for Iter<'_, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1454,7 +1454,7 @@ where
     }
 }
 
-impl<'a, L, R, S> ExactSizeIterator for PairedIter<'a, L, R, S>
+impl<L, R, S> ExactSizeIterator for PairedIter<'_, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,
@@ -1521,7 +1521,7 @@ where
     }
 }
 
-impl<'a, L, R, S> ExactSizeIterator for UnpairedIter<'a, L, R, S>
+impl<L, R, S> ExactSizeIterator for UnpairedIter<'_, L, R, S>
 where
     L: Hash + Eq,
     R: Hash + Eq,

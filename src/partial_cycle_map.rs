@@ -28,21 +28,16 @@ pub(crate) struct MappingPair<T> {
     pub(crate) id: u64,
 }
 
-pub(crate) fn equivalent_key<K, Q: PartialEq<K> + ?Sized>(
-    k: &Q,
-) -> impl Fn(&MappingPair<K>) -> bool + '_ {
+pub(crate) fn equivalent_key<K, Q: PartialEq<K>>(k: &Q) -> impl '_ + Fn(&MappingPair<K>) -> bool {
     move |x| k.eq(&x.value)
 }
 
-pub(crate) fn hash_and_id<'a, Q: PartialEq + ?Sized>(
-    hash: u64,
-    id: u64,
-) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
+pub(crate) fn hash_and_id<Q: PartialEq>(hash: u64, id: u64) -> impl Fn(&MappingPair<Q>) -> bool {
     move |x| id == x.id && Some(hash) == x.hash
 }
 
 // To be safe, use `hash_and_id` whenever possible
-pub(crate) fn just_id<'a, Q: PartialEq + ?Sized>(id: u64) -> impl Fn(&MappingPair<Q>) -> bool + 'a {
+pub(crate) fn just_id<Q: PartialEq>(id: u64) -> impl Fn(&MappingPair<Q>) -> bool {
     move |x| id == x.id
 }
 

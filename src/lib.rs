@@ -16,8 +16,13 @@
 //! CycleMap is build on top of [`hashbrown`]. All maps use its default hashing algorithm, but
 //! different hashing algorithms can be specified on creation of any map.
 
-#![deny(unused_imports, missing_debug_implementations, unreachable_pub)]
-#![cfg_attr(doc, deny(missing_docs, rustdoc::broken_intra_doc_links))]
+#![deny(
+    unused_imports,
+    missing_debug_implementations,
+    unreachable_pub,
+    missing_docs,
+    rustdoc::broken_intra_doc_links
+)]
 #![warn(rust_2018_idioms)]
 
 #[cfg(feature = "serde")]

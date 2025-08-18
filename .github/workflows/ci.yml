@@ -19,7 +19,7 @@ jobs:
         with:
           rust-version: stable
           components: rustfmt, clippy
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: cargo fmt --check
       - run: cargo clippy --all
 
@@ -34,7 +34,7 @@ jobs:
         uses: hecrj/setup-rust-action@v2
         with:
           rust-version: stable
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: cargo build --all-features --verbose
       - run: cargo test --all-features --verbose
       - run: cargo doc --all-features --verbose
@@ -47,7 +47,7 @@ jobs:
       options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Generate code coverage
         run: |
